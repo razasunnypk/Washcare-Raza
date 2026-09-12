@@ -372,6 +372,10 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
       <div class="panel-hd"><h2>Items sold</h2></div>
       <div class="scroll"><table class="data" id="rItems"></table></div>
     </div>
+    <div class="panel" id="panelStaff">
+      <div class="panel-hd"><h2>By staff</h2><span class="sub">Who took the orders and the cash</span></div>
+      <div class="scroll"><table class="data" id="rStaff"></table></div>
+    </div>
     <div class="panel">
       <div class="panel-hd"><h2>Month by month</h2></div>
       <div class="scroll"><table class="data" id="rMonths"></table></div>
@@ -680,6 +684,12 @@ function prevDue(mobile, excludeId){
   },0));
 }
 
+function whoAmI(){
+  if(typeof CLOUD!=="undefined" && CLOUD.user && CLOUD.user.email) return CLOUD.user.email;
+  var dc=(DB.settings.deviceCode||"").toUpperCase();
+  return dc ? "device "+dc : "this device";
+}
+function shortWho(w){ return String(w||"—").split("@")[0]; }
 function isStaff(){ return DB.settings.role === "staff"; }
 function mob(m){
   if(!isStaff()) return m||"";
@@ -924,6 +934,9 @@ function saveOrder(){
   var o = formOrder();
   if(!o.cust.name){ toast("Customer name is required"); $("#cName").focus(); return null; }
   if(!o.lines.length){ toast("Add at least one item"); $("#iName").focus(); return null; }
+  o.dev = (DB.settings.deviceCode||"").toUpperCase();
+  if(draft.editingId){ o.by = draft.by || o.by; o.editBy = whoAmI(); o.editAt = nowISO(); }
+  else { o.by = whoAmI(); }
   touch(o);
   if(draft.editingId){
     var i = DB.orders.findIndex(function(x){ return x.id===draft.editingId; });
@@ -947,7 +960,7 @@ $("#btnSavePrint").addEventListener("click", function(){
 
 function editOrder(id){
   var o = DB.orders.filter(function(x){ return x.id===id; })[0]; if(!o) return;
-  draft = { lines:o.lines.slice(), editingId:o.id, no:o.no, createdTime:o.time, payments:o.payments||[] };
+  draft = { lines:o.lines.slice(), editingId:o.id, no:o.no, createdTime:o.time, payments:o.payments||[], by:o.by };
   $("#cMobile").value=o.cust.mobile; $("#cName").value=o.cust.name; $("#cArea").value=o.cust.area;
   $("#cBuilding").value=o.cust.building; $("#cFlat").value=o.cust.flat;
   $("#oDate").value=o.date; $("#dDate").value=o.delivery.date; $("#dTime").value=o.delivery.time;
@@ -1211,12 +1224,14 @@ document.addEventListener("keydown", function(e){ if(e.key==="Escape") closeModa
 
 function openOrder(id){
   var o=byId(id); if(!o) return; var c=calc(o);
-  var pays = (o.payments||[]).map(function(p){ return '<tr><td>'+dmy(p.date)+'</td><td>'+esc(p.mode)+'</td><td class="n">'+money(p.amount)+'</td></tr>'; }).join("");
+  var pays = (o.payments||[]).map(function(p){ return '<tr><td>'+dmy(p.date)+'</td><td>'+esc(p.mode)+'</td><td>'+esc(shortWho(p.by))+'</td><td class="n">'+money(p.amount)+'</td></tr>'; }).join("");
   var html =
     '<div class="rec" style="border:0;padding:0 0 10px"><div class="main">'+
       '<div class="no">'+esc(o.no)+'</div><div class="who">'+esc(o.cust.name)+'</div>'+
       '<div class="meta">'+esc(mob(o.cust.mobile))+' · '+esc(o.cust.area||"")+' '+esc(o.cust.building||"")+' '+esc(o.cust.flat||"")+'</div>'+
       '<div class="meta">Booked '+dmy(o.date)+' · delivery '+dmy(o.delivery.date)+' '+hhmm12(o.delivery.time)+'</div>'+
+      '<div class="meta">Taken by <b>'+esc(shortWho(o.by))+'</b>'+((o.dev && String(o.by||"").indexOf(o.dev)<0)?' · device '+esc(o.dev):'')+
+        (o.editBy?' · last edited by '+esc(shortWho(o.editBy))+' '+dmy((o.editAt||"").slice(0,10)):'')+'</div>'+
     '</div></div>'+
     '<div class="scroll"><table class="data"><thead><tr><th>Qty</th><th>Item</th><th class="n">Rate</th><th class="n">Amount</th></tr></thead><tbody>'+
       o.lines.map(function(l){ return '<tr><td>'+l.qty+'</td><td>'+esc(l.name)+' <small>('+esc(TYPE_LABEL[l.type]||l.type)+')</small></td><td class="n">'+money(l.rate)+'</td><td class="n">'+money(l.qty*l.rate)+'</td></tr>'; }).join("")+
@@ -1230,7 +1245,7 @@ function openOrder(id){
       '<div class="trow"><span>Paid</span><span>'+money(c.paid)+'</span></div>'+
       '<div class="trow big"><span>Balance</span><span>'+money(c.balance)+'</span></div>'+
     '</div>'+
-    (pays?'<div class="scroll" style="margin-top:12px"><table class="data"><thead><tr><th>Payment date</th><th>Mode</th><th class="n">Amount</th></tr></thead><tbody>'+pays+'</tbody></table></div>':'')+
+    (pays?'<div class="scroll" style="margin-top:12px"><table class="data"><thead><tr><th>Payment date</th><th>Mode</th><th>Received by</th><th class="n">Amount</th></tr></thead><tbody>'+pays+'</tbody></table></div>':'')+
     (o.notes?'<p class="hint">Note: '+esc(o.notes)+'</p>':'')+
     '<div class="btn-row" style="margin-top:14px">'+
       '<button class="btn primary" data-m-print="'+o.id+'">Print all copies</button>'+
@@ -1240,7 +1255,7 @@ function openOrder(id){
       '<button class="btn" data-m-copy="'+o.id+'">Copy message</button>'+
       (c.balance>0.009?'<button class="btn dark" data-m-pay="'+o.id+'">Receive payment</button>':'')+
       '<button class="btn" data-m-edit="'+o.id+'">Edit</button>'+
-      '<button class="btn danger" data-m-del="'+o.id+'">Delete</button>'+
+      (isStaff()?'':'<button class="btn danger" data-m-del="'+o.id+'">Delete</button>')+
     '</div>';
   openModal("Order details", html);
   $("[data-m-print]").addEventListener("click",function(){ printOrder(o); });
@@ -1250,7 +1265,7 @@ function openOrder(id){
   $("[data-m-copy]").addEventListener("click",function(){ copyText(waText(o)); });
   var pb=$("[data-m-pay]"); if(pb) pb.addEventListener("click",function(){ payModal(o.id); });
   $("[data-m-edit]").addEventListener("click",function(){ editOrder(o.id); });
-  $("[data-m-del]").addEventListener("click",function(){
+  var db=$("[data-m-del]"); if(db) db.addEventListener("click",function(){
     if(!confirm("Delete order "+o.no+"? This cannot be undone.")) return;
     DB.orders = DB.orders.filter(function(x){ return x.id!==o.id; });
     DB.tomb.push({id:o.id, no:o.no, u:nowISO(), dirty:true});
@@ -1273,7 +1288,7 @@ function payModal(id){
     var amt=Number($("#payAmt").value)||0;
     if(amt<=0){ toast("Enter an amount"); return; }
     o.payments = o.payments||[];
-    o.payments.push({date:$("#payDate").value||todayISO(), amount:amt, mode:$("#payMode").value});
+    o.payments.push({date:$("#payDate").value||todayISO(), amount:amt, mode:$("#payMode").value, by:whoAmI()});
     touch(o); save(); cloudPush(); closeModal(); refreshChrome(); renderOrders(); renderCustomers(); toast("Payment recorded");
   });
 }
@@ -1390,6 +1405,27 @@ function renderReports(){
     (months.length ? months.map(function(m){ return '<tr><td>'+monthName(m.k)+'</td><td class="n">'+m.orders+'</td><td class="n">'+money(m.net)+'</td><td class="n">'+money(m.paid)+'</td><td class="n">'+money(m.due)+'</td></tr>'; }).join("")
       : '<tr><td colspan="5">No records yet.</td></tr>')+'</tbody>';
 
+  // by staff
+  var by={};
+  list.forEach(function(o){
+    var c=calc(o), k=shortWho(o.by);
+    if(!by[k]) by[k]={who:k, orders:0, billed:0, collected:0};
+    by[k].orders++; by[k].billed=r2(by[k].billed+c.incl);
+    by[k].collected=r2(by[k].collected+(Number(o.advance)||0));
+    (o.payments||[]).forEach(function(p){
+      var pk=shortWho(p.by||o.by);
+      if(!by[pk]) by[pk]={who:pk, orders:0, billed:0, collected:0};
+      by[pk].collected=r2(by[pk].collected+(Number(p.amount)||0));
+    });
+  });
+  var staffRows = Object.keys(by).map(function(k){ return by[k]; }).sort(function(a,b){ return b.collected-a.collected; });
+  var sp=$("#panelStaff");
+  if(sp){
+    sp.hidden = isStaff();
+    $("#rStaff").innerHTML = '<thead><tr><th>Staff</th><th class="n">Orders</th><th class="n">Billed</th><th class="n">Cash collected</th></tr></thead><tbody>'+
+      (staffRows.length ? staffRows.map(function(x){ return '<tr><td>'+esc(x.who)+'</td><td class="n">'+x.orders+'</td><td class="n">'+money(x.billed)+'</td><td class="n"><b>'+money(x.collected)+'</b></td></tr>'; }).join("")
+        : '<tr><td colspan="4">No activity this month.</td></tr>')+'</tbody>';
+  }
   window.__report = {ym:ym, t:t, items:items};
   function kpi(v,l,cls){ return '<div class="kpi '+cls+'"><b>'+v+'</b><span>'+l+'</span></div>'; }
 }
