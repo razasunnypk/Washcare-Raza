@@ -674,6 +674,24 @@ function calc(o){
   var qty = (o.lines||[]).reduce(function(a,l){ return a+(Number(l.qty)||0); },0);
   return {sub:sub, urgent:urgent, disc:disc, incl:incl, before:before, vat:vat, vatRate:vatRate, paid:paid, balance:balance, qty:r2(qty)};
 }
+var MODES = ["Cash","Card","Bank transfer"];
+function modeKey(m){
+  var s=String(m||"Cash").toLowerCase();
+  if(s.indexOf("card")>-1) return "Card";
+  if(s.indexOf("bank")>-1 || s.indexOf("transfer")>-1) return "Bank transfer";
+  if(s.indexOf("cash")>-1) return "Cash";
+  return "Other";
+}
+function collections(o){
+  var out={Cash:0, Card:0, "Bank transfer":0, Other:0};
+  var adv=Number(o.advance)||0;
+  if(adv>0) out[modeKey(o.mode)] = r2(out[modeKey(o.mode)] + adv);
+  (o.payments||[]).forEach(function(p){
+    var k=modeKey(p.mode), amt=Number(p.amount)||0;
+    out[k] = r2(out[k] + amt);
+  });
+  return out;
+}
 function isPaid(o){ return calc(o).balance <= 0.009; }
 function prevDue(mobile, excludeId){
   var key = digits(mobile); if(!key) return 0;
@@ -1243,6 +1261,12 @@ function openOrder(id){
       '<div class="trow"><span>VAT '+c.vatRate+'% (included)</span><span>'+money(c.vat)+'</span></div>'+
       '<div class="trow big"><span>Net amount</span><span>'+money(c.incl)+'</span></div>'+
       '<div class="trow"><span>Paid</span><span>'+money(c.paid)+'</span></div>'+
+      (function(){
+        var m=collections(o), out="";
+        MODES.forEach(function(k){ if(m[k]>0.009) out+='<div class="trow"><span style="padding-left:12px;color:var(--muted)">'+k+'</span><span>'+money(m[k])+'</span></div>'; });
+        if(m.Other>0.009) out+='<div class="trow"><span style="padding-left:12px;color:var(--muted)">Other</span><span>'+money(m.Other)+'</span></div>';
+        return out;
+      })()+
       '<div class="trow big"><span>Balance</span><span>'+money(c.balance)+'</span></div>'+
     '</div>'+
     (pays?'<div class="scroll" style="margin-top:12px"><table class="data"><thead><tr><th>Payment date</th><th>Mode</th><th>Received by</th><th class="n">Amount</th></tr></thead><tbody>'+pays+'</tbody></table></div>':'')+
@@ -1358,16 +1382,20 @@ function renderReports(){
   var list = monthOrders(ym);
   $("#rTitle").textContent = monthName(ym);
 
-  var t={orders:list.length, pcs:0, sub:0, urgent:0, disc:0, net:0, vat:0, paid:0, due:0, urgentCount:0};
+  var t={orders:list.length, pcs:0, sub:0, urgent:0, disc:0, net:0, vat:0, paid:0, due:0, urgentCount:0,
+         cash:0, card:0, bank:0, other:0};
   list.forEach(function(o){
-    var c=calc(o);
+    var c=calc(o), m=collections(o);
+    t.cash=r2(t.cash+m.Cash); t.card=r2(t.card+m.Card); t.bank=r2(t.bank+m["Bank transfer"]); t.other=r2(t.other+m.Other);
     t.pcs+=c.qty; t.sub+=c.sub; t.urgent+=c.urgent; t.disc+=c.disc;
     t.net+=c.incl; t.vat+=c.vat; t.paid+=c.paid; t.due+=c.balance;
     if(o.urgent) t.urgentCount++;
   });
   $("#rKpis").innerHTML =
     kpi(t.orders,"Orders","accent") + kpi(money(t.net),"Net sales (AED)","accent") +
-    kpi(money(t.paid),"Collected (AED)","") + kpi(money(t.due),"Pending (AED)","due") +
+    kpi(money(t.paid),"Collected total (AED)","") + kpi(money(t.due),"Pending (AED)","due") +
+    kpi(money(t.cash),"Cash (AED)","accent") + kpi(money(t.card),"Card (AED)","") +
+    kpi(money(t.bank),"Bank transfer (AED)","") + (t.other>0.009?kpi(money(t.other),"Other (AED)",""):"") +
     kpi(r2(t.pcs),"Pieces","") + kpi(money(t.vat),"VAT included (AED)","") +
     kpi(money(t.disc),"Discounts (AED)","") + kpi(money(t.urgent),"Urgent charges (AED)","");
 
@@ -1407,24 +1435,35 @@ function renderReports(){
 
   // by staff
   var by={};
+  function bucket(k){
+    if(!by[k]) by[k]={who:k, orders:0, billed:0, cash:0, card:0, bank:0, other:0, total:0};
+    return by[k];
+  }
+  function credit(who, mode, amt){
+    if(!(amt>0)) return;
+    var e=bucket(who), k=modeKey(mode);
+    if(k==="Card") e.card=r2(e.card+amt);
+    else if(k==="Bank transfer") e.bank=r2(e.bank+amt);
+    else if(k==="Cash") e.cash=r2(e.cash+amt);
+    else e.other=r2(e.other+amt);
+    e.total=r2(e.total+amt);
+  }
   list.forEach(function(o){
     var c=calc(o), k=shortWho(o.by);
-    if(!by[k]) by[k]={who:k, orders:0, billed:0, collected:0};
-    by[k].orders++; by[k].billed=r2(by[k].billed+c.incl);
-    by[k].collected=r2(by[k].collected+(Number(o.advance)||0));
-    (o.payments||[]).forEach(function(p){
-      var pk=shortWho(p.by||o.by);
-      if(!by[pk]) by[pk]={who:pk, orders:0, billed:0, collected:0};
-      by[pk].collected=r2(by[pk].collected+(Number(p.amount)||0));
-    });
+    var e=bucket(k); e.orders++; e.billed=r2(e.billed+c.incl);
+    credit(k, o.mode, Number(o.advance)||0);
+    (o.payments||[]).forEach(function(p){ credit(shortWho(p.by||o.by), p.mode, Number(p.amount)||0); });
   });
-  var staffRows = Object.keys(by).map(function(k){ return by[k]; }).sort(function(a,b){ return b.collected-a.collected; });
+  var staffRows = Object.keys(by).map(function(k){ return by[k]; }).sort(function(a,b){ return b.total-a.total; });
   var sp=$("#panelStaff");
   if(sp){
     sp.hidden = isStaff();
-    $("#rStaff").innerHTML = '<thead><tr><th>Staff</th><th class="n">Orders</th><th class="n">Billed</th><th class="n">Cash collected</th></tr></thead><tbody>'+
-      (staffRows.length ? staffRows.map(function(x){ return '<tr><td>'+esc(x.who)+'</td><td class="n">'+x.orders+'</td><td class="n">'+money(x.billed)+'</td><td class="n"><b>'+money(x.collected)+'</b></td></tr>'; }).join("")
-        : '<tr><td colspan="4">No activity this month.</td></tr>')+'</tbody>';
+    $("#rStaff").innerHTML = '<thead><tr><th>Staff</th><th class="n">Orders</th><th class="n">Billed</th><th class="n">Cash</th><th class="n">Card</th><th class="n">Bank</th><th class="n">Total in</th></tr></thead><tbody>'+
+      (staffRows.length ? staffRows.map(function(x){
+        return '<tr><td>'+esc(x.who)+'</td><td class="n">'+x.orders+'</td><td class="n">'+money(x.billed)+
+          '</td><td class="n"><b>'+money(x.cash)+'</b></td><td class="n">'+money(x.card)+'</td><td class="n">'+money(x.bank)+
+          (x.other>0.009?'+'+money(x.other):'')+'</td><td class="n">'+money(x.total)+'</td></tr>'; }).join("")
+        : '<tr><td colspan="7">No activity this month.</td></tr>')+'</tbody>';
   }
   window.__report = {ym:ym, t:t, items:items};
   function kpi(v,l,cls){ return '<div class="kpi '+cls+'"><b>'+v+'</b><span>'+l+'</span></div>'; }
@@ -1592,13 +1631,14 @@ $("#restoreInput").addEventListener("change", function(e){
   rd.readAsText(f); e.target.value="";
 });
 function csvOf(orders){
-  var head=["Receipt","Date","Time","Delivery","Customer","Mobile","Area","Building","Flat","Pieces","Items","Urgent","Subtotal","UrgentCharge","Discount","BeforeVAT","VAT","NetAED","Paid","Balance","Status","Notes"];
+  var head=["Receipt","Date","Time","Delivery","Customer","Mobile","Area","Building","Flat","Pieces","Items","Urgent","Subtotal","UrgentCharge","Discount","BeforeVAT","VAT","NetAED","Paid","Cash","Card","BankTransfer","Balance","Status","Notes"];
   var rows=orders.map(function(o){
-    var c=calc(o);
+    var c=calc(o), mm=collections(o);
     var items=o.lines.map(function(l){ return l.qty+"x "+l.name+" ("+(TYPE_LABEL[l.type]||l.type)+")"; }).join("; ");
     return [o.no,o.date,o.time,o.delivery.date,o.cust.name,o.cust.mobile,o.cust.area,o.cust.building,o.cust.flat,
       c.qty,items,o.urgent?"Yes":"No",money(c.sub),money(c.urgent),money(c.disc),money(c.before),money(c.vat),
-      money(c.incl),money(c.paid),money(c.balance),c.balance<=0.009?"Paid":"Pending",o.notes||""];
+      money(c.incl),money(c.paid),money(mm.Cash),money(mm.Card),money(mm["Bank transfer"]),
+      money(c.balance),c.balance<=0.009?"Paid":"Pending",o.notes||""];
   });
   return [head].concat(rows).map(function(r){
     return r.map(function(v){ return '"'+String(v==null?"":v).replace(/"/g,'""')+'"'; }).join(",");
