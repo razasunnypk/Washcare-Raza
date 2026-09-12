@@ -414,7 +414,24 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
 
   <!-- ============ SETTINGS ============ -->
   <section class="view" id="view-settings" hidden>
-    <div class="panel">
+    <div class="panel" id="panelRole">
+      <div class="panel-hd"><h2>This device</h2><span class="sub" id="roleState"></span></div>
+      <div class="panel-bd">
+        <p class="hint" style="margin-top:0" id="roleExplain"></p>
+        <div class="btn-row">
+          <button class="btn" id="btnRoleStaff">Lock as staff device</button>
+          <button class="btn primary" id="btnRoleOwner">Unlock as owner</button>
+        </div>
+        <div id="pinSetup" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+          <div class="grid g2 keep">
+            <label class="fld"><span>Owner PIN</span><input type="password" id="sPin" inputmode="numeric" placeholder="4-8 digits"></label>
+            <label class="fld"><span>&nbsp;</span><button class="btn" id="btnSetPin" style="width:100%">Set owner PIN</button></label>
+          </div>
+          <p class="hint">Staff devices need this PIN to unlock owner mode. Do not share it.</p>
+        </div>
+      </div>
+    </div>
+    <div class="panel" id="panelBusiness">
       <div class="panel-hd"><h2>Business details</h2><span class="sub">These print on every receipt</span></div>
       <div class="panel-bd">
         <div class="grid g2">
@@ -436,7 +453,7 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
       </div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="panelLogo">
       <div class="panel-hd"><h2>Receipt logo</h2><span class="sub">PNG or JPG, ideally 400px wide</span></div>
       <div class="panel-bd">
         <div class="brandmark" style="width:120px;height:70px;border-radius:8px" id="logoPreview"></div>
@@ -460,7 +477,7 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
       </div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="panelWa">
       <div class="panel-hd"><h2>WhatsApp</h2><span class="sub">Used by the Send on WhatsApp button</span></div>
       <div class="panel-bd">
         <div class="grid g2 keep">
@@ -487,7 +504,7 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
       </div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="panelData">
       <div class="panel-hd"><h2>Backup and data</h2></div>
       <div class="panel-bd">
         <div class="btn-row">
@@ -563,7 +580,7 @@ function defaultDB(){
       terms:DEFAULT_TERMS, footer:"Care for Your Clothes",
       logo:RECEIPT_LOGO, copies:{office:true, customer:true, factory:true},
       cc:"971", waPrices:true, waLine:"Free pickup and delivery across Dubai.",
-      deviceCode:""
+      deviceCode:"", role:"owner", pinHash:""
     },
     items: DEFAULT_ITEMS.slice(),
     orders: [],
@@ -661,6 +678,50 @@ function prevDue(mobile, excludeId){
     if(digits(o.cust.mobile)!==key) return a;
     return a + calc(o).balance;
   },0));
+}
+
+function isStaff(){ return DB.settings.role === "staff"; }
+function mob(m){
+  if(!isStaff()) return m||"";
+  var d=digits(m); if(!d) return "";
+  return "•••• "+d.slice(-4);
+}
+function sha(txt){
+  var seed = "wc:"+txt;
+  if(window.crypto && window.crypto.subtle && window.TextEncoder){
+    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed)).then(function(buf){
+      return Array.prototype.map.call(new Uint8Array(buf), function(b){ return ("0"+b.toString(16)).slice(-2); }).join("");
+    }).catch(function(){ return weakHash(seed); });
+  }
+  return Promise.resolve(weakHash(seed));
+}
+function weakHash(s){
+  var h1=0x811c9dc5, h2=0x01000193;
+  for(var i=0;i<s.length;i++){
+    h1 = (h1 ^ s.charCodeAt(i)) * 16777619 >>> 0;
+    h2 = (h2 + s.charCodeAt(i) * (i+7)) * 2654435761 >>> 0;
+  }
+  return "w"+h1.toString(16)+h2.toString(16);
+}
+function applyRole(){
+  var staff = isStaff();
+  $$(".tab").forEach(function(b){
+    if(b.dataset.view==="customers" || b.dataset.view==="prices") b.hidden = staff;
+  });
+  ["panelBusiness","panelLogo","panelWa","panelData"].forEach(function(id){
+    var el=$("#"+id); if(el) el.hidden = staff;
+  });
+  var ps=$("#pinSetup"); if(ps) ps.hidden = staff;
+  var rs=$("#roleState"); if(rs) rs.textContent = staff ? "Staff device" : "Owner device";
+  var re=$("#roleExplain");
+  if(re) re.textContent = staff
+    ? "Customer phone numbers are hidden, the customer list and price list are locked, and data cannot be exported from this device."
+    : "Full access. Lock this device as a staff device before handing it to the counter.";
+  var so=$("#btnRoleOwner"), st=$("#btnRoleStaff");
+  if(so) so.hidden = !staff;
+  if(st) st.hidden = staff;
+  var cust=$$(".view").filter(function(v){ return v.id==="view-customers"||v.id==="view-prices"; });
+  if(staff && cust.some(function(v){ return !v.hidden; })) showView("new");
 }
 
 /* ============================================================
@@ -1072,7 +1133,7 @@ function copyText(txt){
 function savedModal(o){
   var num = waNumber(o.cust.mobile);
   openModal("Order "+o.no+" saved",
-    '<p class="hint" style="margin-top:0">'+esc(o.cust.name)+(num?" · WhatsApp +"+esc(num):" · no mobile number saved")+'</p>'+
+    '<p class="hint" style="margin-top:0">'+esc(o.cust.name)+(num?" · WhatsApp "+esc(mob(o.cust.mobile)):" · no mobile number saved")+'</p>'+
     '<div class="btn-row">'+
       (num?'<button class="btn primary" id="mWa">Send on WhatsApp</button>':'')+
       '<button class="btn" id="mPrint">Print all copies</button>'+
@@ -1114,7 +1175,7 @@ function renderOrders(){
     return '<div class="rec"><div class="main">'+
       '<div class="no">'+esc(o.no)+'</div>'+
       '<div class="who">'+esc(o.cust.name)+'</div>'+
-      '<div class="meta">'+dmy(o.date)+' · '+c.qty+' pcs · '+esc(o.cust.mobile||"no number")+(o.cust.area?" · "+esc(o.cust.area):"")+'</div>'+
+      '<div class="meta">'+dmy(o.date)+' · '+c.qty+' pcs · '+esc(mob(o.cust.mobile)||"no number")+(o.cust.area?" · "+esc(o.cust.area):"")+'</div>'+
       '<div class="acts">'+
         '<button class="btn sm" data-view-order="'+o.id+'">Details</button>'+
         '<button class="btn sm" data-print="'+o.id+'">Print</button>'+
@@ -1154,7 +1215,7 @@ function openOrder(id){
   var html =
     '<div class="rec" style="border:0;padding:0 0 10px"><div class="main">'+
       '<div class="no">'+esc(o.no)+'</div><div class="who">'+esc(o.cust.name)+'</div>'+
-      '<div class="meta">'+esc(o.cust.mobile)+' · '+esc(o.cust.area||"")+' '+esc(o.cust.building||"")+' '+esc(o.cust.flat||"")+'</div>'+
+      '<div class="meta">'+esc(mob(o.cust.mobile))+' · '+esc(o.cust.area||"")+' '+esc(o.cust.building||"")+' '+esc(o.cust.flat||"")+'</div>'+
       '<div class="meta">Booked '+dmy(o.date)+' · delivery '+dmy(o.delivery.date)+' '+hhmm12(o.delivery.time)+'</div>'+
     '</div></div>'+
     '<div class="scroll"><table class="data"><thead><tr><th>Qty</th><th>Item</th><th class="n">Rate</th><th class="n">Amount</th></tr></thead><tbody>'+
@@ -1242,7 +1303,7 @@ function renderCustomers(){
   box.innerHTML = list.map(function(c){
     return '<div class="rec"><div class="main">'+
       '<div class="who">'+esc(c.name)+'</div>'+
-      '<div class="meta">'+esc(c.mobile||"no number")+(c.area?" · "+esc(c.area):"")+'</div>'+
+      '<div class="meta">'+esc(mob(c.mobile)||"no number")+(c.area?" · "+esc(c.area):"")+'</div>'+
       '<div class="meta">'+c.orders.length+' orders · last '+dmy(c.last)+'</div>'+
       '<div class="acts"><button class="btn sm" data-cust="'+esc(c.key)+'">Order history</button></div>'+
     '</div><div class="money"><b>'+money(c.spent)+'</b>'+
@@ -1262,7 +1323,7 @@ function openCustomer(key){
       sp.map(function(x){ return '<tr><td>'+esc(x.name)+'</td><td>'+esc(TYPE_LABEL[x.type]||x.type)+'</td><td class="n"><b>'+money(x.rate)+'</b></td><td class="n">'+money(x.listed)+'</td></tr>'; }).join("")+
       '</tbody></table></div>' : "";
   openModal(c.name,
-    '<p class="hint" style="margin-top:0">'+esc(c.mobile||"")+(c.area?" · "+esc(c.area):"")+'</p>'+
+    '<p class="hint" style="margin-top:0">'+esc(mob(c.mobile))+(c.area?" · "+esc(c.area):"")+'</p>'+
     '<div class="kpis"><div class="kpi"><b>'+c.orders.length+'</b><span>Orders</span></div>'+
     '<div class="kpi"><b>'+money(c.spent)+'</b><span>Billed (AED)</span></div>'+
     '<div class="kpi '+(c.due>0.009?"due":"")+'"><b>'+money(c.due)+'</b><span>Pending (AED)</span></div>'+
@@ -1429,6 +1490,7 @@ function fillSettings(){
   $("#sWeb").value=s.web; $("#sTrn").value=s.trn||""; $("#sVat").value=s.vat;
   $("#sUrgent").value=s.urgentPct; $("#sPrefix").value=s.prefix; $("#sNext").value=s.next;
   $("#sTerms").value=s.terms; $("#sFooter").value=s.footer;
+  applyRole();
   $("#sDevice").value=s.deviceCode||"";
   $("#sUser").value = CLOUD.user ? (CLOUD.user.email||"signed in") : (cloudConfigured()?"not signed in":"sync not configured");
   setSync(CLOUD.state);
@@ -1466,6 +1528,7 @@ $("#btnRemoveLogo").addEventListener("click", function(){ DB.settings.logo=RECEI
    14. BACKUP / EXPORT
    ============================================================ */
 function download(name, text, type){
+  if(isStaff()){ toast("Exporting is disabled on a staff device"); return; }
   var blob=new Blob([text],{type:type||"text/plain;charset=utf-8"});
   var url=URL.createObjectURL(blob), a=document.createElement("a");
   a.href=url; a.download=name; document.body.appendChild(a); a.click();
@@ -1522,7 +1585,7 @@ $("#btnWipe").addEventListener("click", function(){
 /* ============================================================
    14b. CLOUD SYNC (Supabase)
    ============================================================ */
-var LOCAL_ONLY_KEYS = ["next","deviceCode","copies","pad"];
+var LOCAL_ONLY_KEYS = ["next","deviceCode","copies","pad","role"];
 var CLOUD = {sb:null, user:null, state:"off", pushTimer:null, pulling:false};
 
 function cloudConfigured(){
@@ -1706,6 +1769,27 @@ $("#loginSkip").addEventListener("click", function(){
   $("#login").hidden=true; setSync("signin");
   toast("Working offline. Sign in from Settings to sync.");
 });
+$("#btnRoleStaff").addEventListener("click", function(){
+  if(!DB.settings.pinHash){ toast("Set an owner PIN first, or you cannot unlock this device again"); return; }
+  if(!confirm("Lock this device as a staff device? Customer numbers will be hidden until the owner PIN is entered.")) return;
+  DB.settings.role="staff"; save(); applyRole(); fillDatalists(); rerender(); toast("Locked as staff device");
+});
+$("#btnRoleOwner").addEventListener("click", function(){
+  var pin = prompt("Enter the owner PIN");
+  if(pin===null) return;
+  sha(pin).then(function(h){
+    if(h!==DB.settings.pinHash){ toast("Wrong PIN"); return; }
+    DB.settings.role="owner"; save(); applyRole(); fillDatalists(); rerender(); toast("Owner mode unlocked");
+  });
+});
+$("#btnSetPin").addEventListener("click", function(){
+  var pin=$("#sPin").value.trim();
+  if(!/^[0-9]{4,8}$/.test(pin)){ toast("Use 4 to 8 digits"); return; }
+  sha(pin).then(function(h){
+    DB.settings.pinHash=h; saveS(); $("#sPin").value="";
+    toast("Owner PIN saved on all devices");
+  });
+});
 $("#btnSyncNow").addEventListener("click", function(){
   if(!cloudConfigured()){ toast("Add your Supabase details to config.js first"); return; }
   if(!CLOUD.sb){ cloudInit(); return; }
@@ -1728,8 +1812,11 @@ function fillDatalists(){
     return '<option value="'+esc(it._label)+'">'+esc(rates)+'</option>';
   }).join("");
   $("#areaList").innerHTML = AREAS.map(function(a){ return '<option value="'+esc(a)+'">'; }).join("");
-  var mobs={}; DB.orders.forEach(function(o){ if(o.cust.mobile) mobs[o.cust.mobile]=o.cust.name; });
-  $("#mobileList").innerHTML = Object.keys(mobs).map(function(m){ return '<option value="'+esc(m)+'">'+esc(mobs[m])+'</option>'; }).join("");
+  if(isStaff()){ $("#mobileList").innerHTML=""; }
+  else {
+    var mobs={}; DB.orders.forEach(function(o){ if(o.cust.mobile) mobs[o.cust.mobile]=o.cust.name; });
+    $("#mobileList").innerHTML = Object.keys(mobs).map(function(m){ return '<option value="'+esc(m)+'">'+esc(mobs[m])+'</option>'; }).join("");
+  }
 }
 function refreshChrome(){
   var s=DB.settings;
@@ -1746,6 +1833,7 @@ if(!canPersist) showWarn();
 $("#fMonth").value = monthOf(todayISO());
 $("#rMonth").value = monthOf(todayISO());
 refreshChrome();
+applyRole();
 serviceOptions(null);
 resetForm();
 cloudInit();
