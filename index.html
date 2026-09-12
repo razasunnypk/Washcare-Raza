@@ -749,6 +749,27 @@ function collections(o){
   });
   return out;
 }
+function collectedInMonth(ym){
+  var out={Cash:0, Card:0, "Bank transfer":0, Other:0, total:0, byWho:{}};
+  function add(who, mode, amt){
+    if(!(amt>0)) return;
+    var k=modeKey(mode);
+    out[k]=r2(out[k]+amt); out.total=r2(out.total+amt);
+    var b=out.byWho[who] || (out.byWho[who]={cash:0, card:0, bank:0, other:0, total:0});
+    if(k==="Card") b.card=r2(b.card+amt);
+    else if(k==="Bank transfer") b.bank=r2(b.bank+amt);
+    else if(k==="Cash") b.cash=r2(b.cash+amt);
+    else b.other=r2(b.other+amt);
+    b.total=r2(b.total+amt);
+  }
+  DB.orders.forEach(function(o){
+    if(monthOf(o.date)===ym) add(shortWho(o.by), o.mode, Number(o.advance)||0);
+    (o.payments||[]).forEach(function(p){
+      if(monthOf(p.date||o.date)===ym) add(shortWho(p.by||o.by), p.mode, Number(p.amount)||0);
+    });
+  });
+  return out;
+}
 function isPaid(o){ return calc(o).balance <= 0.009; }
 function prevDue(mobile, excludeId){
   var key = digits(mobile); if(!key) return 0;
@@ -1528,18 +1549,18 @@ function renderReports(){
   var list = monthOrders(ym);
   $("#rTitle").textContent = monthName(ym);
 
+  var col = collectedInMonth(ym);
   var t={orders:list.length, pcs:0, sub:0, urgent:0, disc:0, net:0, vat:0, paid:0, due:0, urgentCount:0,
-         cash:0, card:0, bank:0, other:0};
+         cash:col.Cash, card:col.Card, bank:col["Bank transfer"], other:col.Other, received:col.total};
   list.forEach(function(o){
-    var c=calc(o), m=collections(o);
-    t.cash=r2(t.cash+m.Cash); t.card=r2(t.card+m.Card); t.bank=r2(t.bank+m["Bank transfer"]); t.other=r2(t.other+m.Other);
+    var c=calc(o);
     t.pcs+=c.qty; t.sub+=c.sub; t.urgent+=c.urgent; t.disc+=c.disc;
     t.net+=c.incl; t.vat+=c.vat; t.paid+=c.paid; t.due+=c.balance;
     if(o.urgent) t.urgentCount++;
   });
   $("#rKpis").innerHTML =
     kpi(t.orders,"Orders","accent") + kpi(money(t.net),"Net sales (AED)","accent") +
-    kpi(money(t.paid),"Collected total (AED)","") + kpi(money(t.due),"Pending (AED)","due") +
+    kpi(money(t.received),"Money received (AED)","") + kpi(money(t.due),"Still pending (AED)","due") +
     kpi(money(t.cash),"Cash (AED)","accent") + kpi(money(t.card),"Card (AED)","") +
     kpi(money(t.bank),"Bank transfer (AED)","") + (t.other>0.009?kpi(money(t.other),"Other (AED)",""):"") +
     kpi(r2(t.pcs),"Pieces","") + kpi(money(t.vat),"VAT included (AED)","") +
@@ -1629,8 +1650,11 @@ function renderReports(){
   list.forEach(function(o){
     var c=calc(o), k=shortWho(o.by);
     var e=bucket(k); e.orders++; e.billed=r2(e.billed+c.incl);
-    credit(k, o.mode, Number(o.advance)||0);
-    (o.payments||[]).forEach(function(p){ credit(shortWho(p.by||o.by), p.mode, Number(p.amount)||0); });
+  });
+  Object.keys(col.byWho).forEach(function(k){
+    var src=col.byWho[k], e=bucket(k);
+    e.cash=r2(e.cash+src.cash); e.card=r2(e.card+src.card);
+    e.bank=r2(e.bank+src.bank); e.other=r2(e.other+src.other); e.total=r2(e.total+src.total);
   });
   exList.forEach(function(e){
     var b=bucket(e.spentBy||shortWho(e.by)), a=Number(e.amount)||0;
