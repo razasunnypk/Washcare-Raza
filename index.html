@@ -3,19 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
-<title>WashCare Laundry Manager</title>
+<title>WashCare Branch 2</title>
 <link rel="apple-touch-icon" href="icon-192.png">
 <script src="config.js"></script>
-<meta name="theme-color" content="#1a7bbf">
+<meta name="theme-color" content="#0d6e66">
 <link rel="manifest" href="manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="WashCare">
+<meta name="apple-mobile-web-app-title" content="WashCare B2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
-  --blue:#1a7bbf; --blue-dk:#1565a0; --blue-lt:#e8f4fd; --ink:#0f1f33;
+  --blue:#0d6e66; --blue-dk:#0a544e; --blue-lt:#e3f2f0; --ink:#0f1f33;
   --muted:#5d7186; --line:#d8e2ec; --paper:#f2f6fa; --white:#fff;
   --ok:#0a7d4f; --ok-bg:#e3f6ed; --warn:#b8420f; --warn-bg:#fdeee6;
   --r:10px; --shadow:0 1px 2px rgba(15,31,51,.08);
@@ -510,6 +510,12 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
         </div>
         <div class="grid g3 keep" style="margin-top:10px">
           <label class="fld"><span>VAT %</span><input type="number" id="sVat" step="0.5" min="0"></label>
+          <label class="fld"><span>VAT handling</span>
+            <select id="sVatMode">
+              <option value="inclusive">Prices include VAT</option>
+              <option value="exclusive">Add VAT on top of prices</option>
+            </select>
+          </label>
           <label class="fld"><span>Urgent charge %</span><input type="number" id="sUrgent" step="5" min="0"></label>
           <label class="fld"><span>Receipt prefix</span><input type="text" id="sPrefix"></label>
           <label class="fld"><span>Next receipt no.</span><input type="number" id="sNext" min="1" step="1"></label>
@@ -610,7 +616,7 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
 /* ============================================================
    1. STORAGE  (localStorage with a safe in-memory fallback)
    ============================================================ */
-var KEY = "washcare_lms_v2";
+var KEY = (window.WASHCARE_CONFIG && window.WASHCARE_CONFIG.storageKey) || "washcare_lms_v2";
 var memStore = {}, canPersist = true;
 try{ var t="__t"; localStorage.setItem(t,"1"); localStorage.removeItem(t); }catch(e){ canPersist = false; }
 
@@ -677,7 +683,7 @@ function defaultDB(){
     settings:{
       name:"Washcare Laundry Services", mobile:"0559944375",
       email:"support@washcare.ae", web:"Washcare.ae", trn:"",
-      vat:5, urgentPct:100, prefix:"WC-", next:4528, pad:7,
+      vat:5, vatMode:"inclusive", urgentPct:100, prefix:"WC-", next:4528, pad:7,
       terms:DEFAULT_TERMS, footer:"Care for Your Clothes",
       logo:RECEIPT_LOGO, copies:{office:true, customer:true, factory:true},
       cc:"971", waPrices:true, waLine:"Free pickup and delivery across Dubai.",
@@ -783,14 +789,19 @@ function calc(o){
     ? r2((sub + urgent) * (Number(o.discount)||0) / 100)
     : r2(o.discount);
   if(disc > r2(sub+urgent)) disc = r2(sub+urgent);
-  var incl = r2(sub + urgent - disc); if(incl < 0) incl = 0;
+  var base = r2(sub + urgent - disc); if(base < 0) base = 0;
   var vatRate = Number(o.vat != null ? o.vat : DB.settings.vat)||0;
-  var before = r2(incl / (1 + vatRate/100));
-  var vat = r2(incl - before);
+  var mode = o.vatMode || DB.settings.vatMode || "inclusive";
+  var incl, before, vat;
+  if(mode === "exclusive"){
+    before = base; vat = r2(base * vatRate/100); incl = r2(before + vat);
+  } else {
+    incl = base; before = r2(incl / (1 + vatRate/100)); vat = r2(incl - before);
+  }
   var paid = r2((Number(o.advance)||0) + (o.payments||[]).reduce(function(a,p){ return a+(Number(p.amount)||0); },0));
   var balance = r2(incl - paid);
   var qty = (o.lines||[]).reduce(function(a,l){ return a+(Number(l.qty)||0); },0);
-  return {sub:sub, urgent:urgent, disc:disc, discLabel:(o.discType==="pct" && (Number(o.discount)||0)>0 ? "Discount "+(Number(o.discount)||0)+"%" : "Discount"), incl:incl, before:before, vat:vat, vatRate:vatRate, paid:paid, balance:balance, qty:r2(qty)};
+  return {sub:sub, urgent:urgent, disc:disc, vatMode:mode, discLabel:(o.discType==="pct" && (Number(o.discount)||0)>0 ? "Discount "+(Number(o.discount)||0)+"%" : "Discount"), incl:incl, before:before, vat:vat, vatRate:vatRate, paid:paid, balance:balance, qty:r2(qty)};
 }
 var MODES = ["Cash","Card","Bank transfer"];
 function modeKey(m){
@@ -981,6 +992,7 @@ function formOrder(){
     mode: $("#oMode").value,
     notes: $("#oNotes").value.trim(),
     vat: Number(DB.settings.vat)||0,
+    vatMode: DB.settings.vatMode||"inclusive",
     payments: draft.payments || []
   };
 }
@@ -1008,9 +1020,9 @@ function renderTotals(){
     row("Total in AED", c.sub, true) +
     row(c.discLabel, c.disc) +
     (o.urgent ? row("Urgent charges", c.urgent, true) : "") +
-    row("Amount incl. VAT", c.incl, true) +
-    row("Amount before VAT", c.before) +
-    row("VAT "+c.vatRate+"%", c.vat) +
+    (c.vatMode==="exclusive"
+      ? row("Amount before VAT", c.before) + row("VAT "+c.vatRate+"%", c.vat) + row("Total with VAT", c.incl, true)
+      : row("Amount incl. VAT", c.incl, true) + row("Amount before VAT", c.before) + row("VAT "+c.vatRate+"%", c.vat)) +
     row("Paid", c.paid) +
     '<div class="trow big"><span>Balance in AED</span><span>'+money(c.balance)+'</span></div>' +
     (due>0.009 ? '<div class="trow"><span>Previous dues</span><span>'+money(due)+'</span></div><div class="trow big"><span>Current balance</span><span>'+money(due+c.balance)+'</span></div>' : "");
@@ -1225,10 +1237,15 @@ function buildReceipt(o, copy){
       '<div class="k">'+esc(c.discLabel)+'</div><div class="v">'+money(c.disc)+'</div>' +
       (o.urgent ? '<div class="k">Urgent Charges</div><div class="v">'+money(c.urgent)+'</div>' : '') +
       '</div><div class="hr thin"></div><div class="sum">' +
-      '<div class="k big">Amount Incl. VAT</div><div class="v big"><b>'+money(c.incl)+'</b></div>' +
-      '</div><div class="hr thin"></div><div class="sum">' +
-      '<div class="k">Amount Before VAT</div><div class="v">'+money(c.before)+'</div>' +
-      '<div class="k">VAT&nbsp;&nbsp;'+c.vatRate+'%</div><div class="v">'+money(c.vat)+'</div>' +
+      (c.vatMode==="exclusive"
+        ? '<div class="k">Amount Before VAT</div><div class="v">'+money(c.before)+'</div>' +
+          '<div class="k">VAT&nbsp;&nbsp;'+c.vatRate+'%</div><div class="v">'+money(c.vat)+'</div>' +
+          '</div><div class="hr thin"></div><div class="sum">' +
+          '<div class="k big">Total Incl. VAT</div><div class="v big"><b>'+money(c.incl)+'</b></div>'
+        : '<div class="k big">Amount Incl. VAT</div><div class="v big"><b>'+money(c.incl)+'</b></div>' +
+          '</div><div class="hr thin"></div><div class="sum">' +
+          '<div class="k">Amount Before VAT</div><div class="v">'+money(c.before)+'</div>' +
+          '<div class="k">VAT&nbsp;&nbsp;'+c.vatRate+'%</div><div class="v">'+money(c.vat)+'</div>') +
       '</div><div class="hr thin"></div><div class="sum">' +
       '<div class="k">Net Amount</div><div class="v"><b>'+money(c.incl)+'</b></div>' +
       '<div class="k pl">Paid ('+esc(o.mode||"Cash")+')</div><div class="v">'+money(c.paid)+'</div>' +
@@ -1523,7 +1540,7 @@ function openOrder(id){
       '<div class="trow"><span>Total</span><span>'+money(c.sub)+'</span></div>'+
       (o.urgent?'<div class="trow"><span>Urgent charges</span><span>'+money(c.urgent)+'</span></div>':'')+
       '<div class="trow"><span>'+esc(c.discLabel)+'</span><span>'+money(c.disc)+'</span></div>'+
-      '<div class="trow"><span>VAT '+c.vatRate+'% (included)</span><span>'+money(c.vat)+'</span></div>'+
+      '<div class="trow"><span>VAT '+c.vatRate+'%'+(c.vatMode==="exclusive"?"":" (included)")+'</span><span>'+money(c.vat)+'</span></div>'+
       '<div class="trow big"><span>Net amount</span><span>'+money(c.incl)+'</span></div>'+
       '<div class="trow"><span>Paid</span><span>'+money(c.paid)+'</span></div>'+
       (function(){
@@ -1953,7 +1970,7 @@ $("#btnSaveSettings").addEventListener("click", function(){
   var s=DB.settings;
   s.name=$("#sName").value.trim()||s.name; s.mobile=$("#sMobile").value.trim();
   s.email=$("#sEmail").value.trim(); s.web=$("#sWeb").value.trim(); s.trn=$("#sTrn").value.trim();
-  s.vat=Number($("#sVat").value)||0; s.urgentPct=Number($("#sUrgent").value)||0;
+  s.vat=Number($("#sVat").value)||0; s.vatMode=$("#sVatMode").value; s.urgentPct=Number($("#sUrgent").value)||0;
   s.prefix=$("#sPrefix").value; s.next=Math.max(1, parseInt($("#sNext").value,10)||1);
   s.terms=$("#sTerms").value.trim(); s.footer=$("#sFooter").value.trim();
   s.cc=digits($("#sCC").value)||"971"; s.waPrices=$("#sWaPrices").checked; s.waLine=$("#sWaLine").value.trim();
