@@ -4,9 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
 <title>WashCare Laundry Manager</title>
-<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-<link rel="icon" type="image/png" sizes="512x512" href="icon.png">
-<link rel="shortcut icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <script src="config.js"></script>
 <meta name="theme-color" content="#1a7bbf">
@@ -167,22 +164,22 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
 
 /* ---------- 80mm receipt ---------- */
 #printArea{display:none}
-.rcpt{width:72mm;margin:0 auto;color:#000;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11.5px;line-height:1.32}
+.rcpt{width:72mm;margin:0 auto;color:#000;background:#fff;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.25;page-break-inside:avoid;break-inside:avoid}
 .rcpt .logo{text-align:center;margin-bottom:2mm}
-.rcpt .logo img{max-width:46mm;max-height:22mm}
-.rcpt .biz{text-align:center;font-weight:bold;font-size:15px;margin-bottom:1mm}
-.rcpt .ctc{text-align:center;font-size:11px;line-height:1.3}
-.rcpt .hr{border-top:1.5px solid #000;margin:1.6mm 0}
+.rcpt .logo img{max-width:40mm;max-height:17mm}
+.rcpt .biz{text-align:center;font-weight:bold;font-size:14px;margin-bottom:.6mm}
+.rcpt .ctc{text-align:center;font-size:10.5px;line-height:1.25}
+.rcpt .hr{border-top:1.5px solid #000;margin:1.1mm 0}
 .rcpt .hr.thin{border-top:1px solid #000}
 .rcpt .title{text-align:center;font-weight:bold;font-size:14px;letter-spacing:.04em}
-.rcpt .copy{text-align:center;font-weight:bold;font-size:11px;border:1.5px solid #000;padding:.6mm 0;margin-top:1.4mm}
+.rcpt .copy{text-align:center;font-weight:bold;font-size:10.5px;border:1.5px solid #000;padding:.4mm 0;margin-top:1mm}
 .rcpt dl{margin:0;display:grid;grid-template-columns:20mm 3mm 1fr;row-gap:.7mm}
 .rcpt dl dt{font-weight:bold}
 .rcpt dl dd{margin:0}
 .rcpt dl dd .r{float:right}
 .rcpt table{width:100%;border-collapse:collapse;font-size:11.5px}
-.rcpt table th{font-weight:bold;text-align:left;padding:.8mm 0}
-.rcpt table td{padding:.9mm 0;vertical-align:top}
+.rcpt table th{font-weight:bold;text-align:left;padding:.6mm 0}
+.rcpt table td{padding:.6mm 0;vertical-align:top}
 .rcpt .n{text-align:right}
 .rcpt .c{text-align:center}
 .rcpt .it b{font-weight:bold}
@@ -192,12 +189,12 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
 .rcpt .sum .v{text-align:right}
 .rcpt .sum .k.pl{font-weight:normal}
 .rcpt .sum .big{font-size:12.5px}
-.rcpt .terms{font-size:9px;line-height:1.28;text-align:justify}
+.rcpt .terms{font-size:8px;line-height:1.22;text-align:justify}
 .rcpt .terms h4{margin:0 0 .8mm;font-size:10px;text-decoration:underline;text-align:center}
 .rcpt .bigno{text-align:right;font-weight:bold;font-size:14px}
 .rcpt .thanks{text-align:center;font-size:11px;margin-top:1.5mm}
 .rcpt .thanks small{display:block;font-size:10px}
-.rcpt .cut{height:6mm}
+.rcpt .cut{height:3mm}
 .rcpt-page{page-break-after:always;break-after:page}
 .rcpt-page:last-child{page-break-after:auto;break-after:auto}
 
@@ -205,7 +202,7 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
   body{background:#fff}
   body>*{display:none !important}
   #printArea{display:block !important}
-  @page{size:80mm auto;margin:3mm 2mm}
+  @page{size:80mm auto;margin:2mm 2mm}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none !important}}
 </style>
@@ -1266,7 +1263,7 @@ function buildReceipt(o, copy){
   var notes = o.notes ? '<div class="terms" style="font-size:10px"><b>Note:</b> '+esc(o.notes)+'</div><div class="hr thin"></div>' : "";
 
   var foot = showMoney
-    ? '<div class="terms"><h4>Terms and Conditions</h4>'+esc(s.terms)+'</div>' +
+    ? (copy==="CUSTOMER" ? '<div class="terms"><h4>Terms and Conditions</h4>'+esc(s.terms)+'</div>' : '') +
       '<div class="bigno">'+esc(o.no)+'</div><div class="hr thin"></div>' +
       '<div class="thanks">Thank You for Choosing '+esc(s.name.split(" ")[0])+'<small>— '+esc(s.footer)+' —</small></div>'
     : '<div class="bigno">'+esc(o.no)+'</div>';
