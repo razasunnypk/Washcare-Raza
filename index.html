@@ -194,12 +194,14 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
 .rcpt .bigno{text-align:right;font-weight:bold;font-size:14px}
 .rcpt .thanks{text-align:center;font-size:11px;margin-top:1.5mm}
 .rcpt .thanks small{display:block;font-size:10px}
-.rcpt .cut{height:3mm}
-.rcpt-page{page-break-after:always;break-after:page}
-.rcpt-page:last-child{page-break-after:auto;break-after:auto}
+.rcpt .cut{height:0}
+.rcpt-page{page-break-after:always;break-after:page;page-break-inside:avoid;break-inside:avoid;overflow:hidden}
+.rcpt-page:last-child{page-break-after:avoid;break-after:avoid}
 
 @media print{
-  body{background:#fff}
+  html,body{background:#fff;margin:0;padding:0}
+  #printArea{margin:0;padding:0}
+  #printArea > .rcpt-page:last-child{page-break-after:avoid !important;break-after:avoid !important}
   body>*{display:none !important}
   #printArea{display:block !important}
   @page{size:80mm auto;margin:2mm 2mm}
@@ -1268,7 +1270,7 @@ function buildReceipt(o, copy){
       '<div class="thanks">Thank You for Choosing '+esc(s.name.split(" ")[0])+'<small>— '+esc(s.footer)+' —</small></div>'
     : '<div class="bigno">'+esc(o.no)+'</div>';
 
-  return '<div class="rcpt rcpt-page">'+head+info+table+sum+notes+foot+'<div class="cut"></div></div>';
+  return '<div class="rcpt rcpt-page">'+head+info+table+sum+notes+foot+'</div>';
 }
 
 function printOrder(o, only){
