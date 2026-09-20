@@ -1526,7 +1526,7 @@ document.addEventListener("keydown", function(e){ if(e.key==="Escape") closeModa
 
 function openOrder(id){
   var o=byId(id); if(!o) return; var c=calc(o);
-  var pays = (o.payments||[]).map(function(p){ return '<tr><td>'+dmy(p.date)+'</td><td>'+esc(p.mode)+'</td><td>'+esc(shortWho(p.by))+'</td><td class="n">'+money(p.amount)+'</td></tr>'; }).join("");
+  var pays = (o.payments||[]).map(function(p){ return '<tr><td>'+dmy(p.date)+'</td><td>'+esc(p.mode)+(p.grp?' <span class="badge paid">Customer payment</span>':'')+'</td><td>'+esc(shortWho(p.by))+'</td><td class="n">'+money(p.amount)+'</td></tr>'; }).join("");
   var html =
     '<div class="rec" style="border:0;padding:0 0 10px"><div class="main">'+
       '<div class="no">'+esc(o.no)+'</div><div class="who">'+esc(o.cust.name)+'</div>'+
@@ -1601,6 +1601,92 @@ function payModal(id){
   });
 }
 
+/* ---------- customer-level payment: one amount, split oldest bill first ---------- */
+function custKey(o){ return digits(o.cust.mobile) || ("n:"+String(o.cust.name||"").toLowerCase()); }
+function openBillsOf(key){
+  return DB.orders.map(function(o,i){ return {o:o, i:i}; })
+    .filter(function(x){ return custKey(x.o)===key && calc(x.o).balance>0.009; })
+    .sort(function(a,b){ return (a.o.date||"").localeCompare(b.o.date||"") || String(a.o.no).localeCompare(String(b.o.no)) || a.i-b.i; })
+    .map(function(x){ return x.o; });
+}
+function allocatePayment(bills, amount){
+  var left=r2(amount), out=[];
+  bills.forEach(function(o){
+    if(left<=0.009) return;
+    var bal=calc(o).balance, take=r2(Math.min(bal,left));
+    if(take>0.009){ out.push({o:o, bal:bal, amt:take}); left=r2(left-take); }
+  });
+  return {parts:out, left:left};
+}
+function custPayments(key){
+  var g={};
+  DB.orders.forEach(function(o){
+    if(custKey(o)!==key) return;
+    (o.payments||[]).forEach(function(p){
+      if(!p.grp) return;
+      var e=g[p.grp]||(g[p.grp]={grp:p.grp, date:p.date, mode:p.mode, by:p.by, total:0, bills:[]});
+      e.total=r2(e.total+(Number(p.amount)||0)); e.bills.push(o.no);
+    });
+  });
+  return Object.keys(g).map(function(k){ return g[k]; }).sort(function(a,b){ return String(b.date).localeCompare(String(a.date)); });
+}
+function custPayModal(key){
+  var c=customerIndex().filter(function(x){ return x.key===key; })[0]; if(!c) return;
+  var bills=openBillsOf(key);
+  if(!bills.length){ toast("No pending bills for this customer"); return; }
+  var due=r2(bills.reduce(function(a,o){ return a+calc(o).balance; },0));
+  openModal("Receive payment",
+    '<p class="hint" style="margin-top:0">'+esc(c.name)+' · '+bills.length+' pending bill'+(bills.length>1?"s":"")+' · total AED '+money(due)+'</p>'+
+    '<div class="grid g2 keep">'+
+      '<label class="fld"><span>Amount received</span><input type="number" id="cpAmt" value="'+money(due)+'" step="0.25" min="0" inputmode="decimal"></label>'+
+      '<label class="fld"><span>Mode</span><select id="cpMode"><option>Cash</option><option>Card</option><option>Bank transfer</option></select></label>'+
+      '<label class="fld"><span>Date</span><input type="date" id="cpDate" value="'+todayISO()+'"></label>'+
+    '</div>'+
+    '<p class="hint" id="cpMsg"></p>'+
+    '<div class="scroll"><table class="data"><thead><tr><th>Bill date</th><th>Receipt</th><th class="n">Pending</th><th class="n">Pays now</th><th class="n">Left</th></tr></thead><tbody id="cpRows"></tbody></table></div>'+
+    '<div class="btn-row" style="margin-top:12px"><button class="btn primary" id="cpGo">Save payment</button><button class="btn" id="cpBack">Back</button></div>');
+  function preview(){
+    var amt=r2($("#cpAmt").value), a=allocatePayment(bills, amt), map={};
+    a.parts.forEach(function(p){ map[p.o.id]=p.amt; });
+    $("#cpRows").innerHTML = bills.map(function(o){
+      var bal=calc(o).balance, pay=map[o.id]||0, rest=r2(bal-pay);
+      return '<tr><td>'+dmy(o.date)+'</td><td>'+esc(o.no)+'</td><td class="n">'+money(bal)+'</td><td class="n"><b>'+(pay?money(pay):"—")+'</b></td><td class="n">'+(rest>0.009?money(rest):'<span class="badge paid">Paid</span>')+'</td></tr>';
+    }).join("");
+    var msg=$("#cpMsg"), go=$("#cpGo");
+    if(amt>due+0.009){ msg.style.color="var(--warn)"; msg.textContent="Amount is more than the total pending (AED "+money(due)+"). Enter AED "+money(due)+" or less."; go.disabled=true; }
+    else if(amt<=0){ msg.style.color="var(--warn)"; msg.textContent="Enter the amount received."; go.disabled=true; }
+    else { msg.style.color=""; msg.textContent="Oldest bill is cleared first. "+a.parts.length+" bill"+(a.parts.length>1?"s":"")+" will be updated"+(amt<due-0.009?", AED "+money(r2(due-amt))+" stays pending.":"."); go.disabled=false; }
+  }
+  $("#cpAmt").addEventListener("input", preview); preview();
+  $("#cpBack").addEventListener("click", function(){ openCustomer(key); });
+  $("#cpGo").addEventListener("click", function(){
+    var amt=r2($("#cpAmt").value);
+    if(!(amt>0) || amt>due+0.009) return;
+    var a=allocatePayment(bills, amt);
+    var grp="cp-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,6);
+    var date=$("#cpDate").value||todayISO(), mode=$("#cpMode").value, by=whoAmI();
+    a.parts.forEach(function(p){
+      p.o.payments=p.o.payments||[];
+      p.o.payments.push({date:date, amount:p.amt, mode:mode, by:by, grp:grp});
+      touch(p.o);
+    });
+    save(); cloudPush(); refreshChrome(); renderOrders(); renderCustomers();
+    toast("AED "+money(amt)+" split across "+a.parts.length+" bill"+(a.parts.length>1?"s":""));
+    openCustomer(key);
+  });
+}
+function undoCustPayment(key, grp){
+  if(isStaff()){ toast("Only the owner can undo a payment"); return; }
+  if(!confirm("Remove this payment from all its bills? The bills will show as pending again.")) return;
+  DB.orders.forEach(function(o){
+    var before=(o.payments||[]).length;
+    o.payments=(o.payments||[]).filter(function(p){ return p.grp!==grp; });
+    if(o.payments.length!==before) touch(o);
+  });
+  save(); cloudPush(); refreshChrome(); renderOrders(); renderCustomers(); toast("Payment removed");
+  openCustomer(key);
+}
+
 /* ============================================================
    10. CUSTOMERS
    ============================================================ */
@@ -1628,12 +1714,13 @@ function renderCustomers(){
       '<div class="who">'+esc(c.name)+'</div>'+
       '<div class="meta">'+esc(mob(c.mobile)||"no number")+(c.area?" · "+esc(c.area):"")+'</div>'+
       '<div class="meta">'+c.orders.length+' orders · last '+dmy(c.last)+'</div>'+
-      '<div class="acts"><button class="btn sm" data-cust="'+esc(c.key)+'">Order history</button></div>'+
+      '<div class="acts"><button class="btn sm" data-cust="'+esc(c.key)+'">Order history</button>'+(c.due>0.009?'<button class="btn sm primary" data-cpay="'+esc(c.key)+'">Receive payment</button>':'')+'</div>'+
     '</div><div class="money"><b>'+money(c.spent)+'</b>'+
       (c.due>0.009?'<span class="badge due">Due '+money(c.due)+'</span>':'<span class="badge paid">Clear</span>')+
     '</div></div>';
   }).join("");
   $$("[data-cust]",box).forEach(function(b){ b.addEventListener("click",function(){ openCustomer(b.dataset.cust); }); });
+  $$("[data-cpay]",box).forEach(function(b){ b.addEventListener("click",function(){ custPayModal(b.dataset.cpay); }); });
 }
 function openCustomer(key){
   var c = customerIndex().filter(function(x){ return x.key===key; })[0]; if(!c) return;
@@ -1642,6 +1729,7 @@ function openCustomer(key){
     return '<tr><td>'+dmy(o.date)+'</td><td>'+esc(o.no)+'</td><td class="n">'+k.qty+'</td><td class="n">'+money(k.incl)+'</td><td class="n">'+money(k.balance)+'</td></tr>';
   }).join("");
   var sp = specialRates(c.mobile);
+  var cps = custPayments(key);
   var spHtml = sp.length ? '<div class="scroll" style="margin-top:12px"><table class="data"><thead><tr><th>Agreed rate</th><th>Service</th><th class="n">Their rate</th><th class="n">List</th></tr></thead><tbody>'+
       sp.map(function(x){ return '<tr><td>'+esc(x.name)+'</td><td>'+esc(TYPE_LABEL[x.type]||x.type)+'</td><td class="n"><b>'+money(x.rate)+'</b></td><td class="n">'+money(x.listed)+'</td></tr>'; }).join("")+
       '</tbody></table></div>' : "";
@@ -1652,7 +1740,13 @@ function openCustomer(key){
     '<div class="kpi '+(c.due>0.009?"due":"")+'"><b>'+money(c.due)+'</b><span>Pending (AED)</span></div>'+
     '<div class="kpi"><b>'+dmy(c.last).slice(0,5)+'</b><span>Last order</span></div></div>'+
     spHtml +
-    '<div class="scroll" style="margin-top:12px"><table class="data"><thead><tr><th>Date</th><th>Receipt</th><th class="n">Pcs</th><th class="n">Net</th><th class="n">Balance</th></tr></thead><tbody>'+rows+'</tbody></table></div>');
+    (c.due>0.009?'<div class="btn-row" style="margin-top:12px"><button class="btn primary" id="custPayBtn">Receive payment</button></div>':'')+
+    '<div class="scroll" style="margin-top:12px"><table class="data"><thead><tr><th>Date</th><th>Receipt</th><th class="n">Pcs</th><th class="n">Net</th><th class="n">Balance</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    (cps.length?'<div class="scroll" style="margin-top:12px"><table class="data"><thead><tr><th>Payment date</th><th>Mode</th><th>Bills covered</th><th class="n">Amount</th>'+(isStaff()?'':'<th></th>')+'</tr></thead><tbody>'+
+      cps.map(function(p){ return '<tr><td>'+dmy(p.date)+'</td><td>'+esc(p.mode)+'</td><td>'+esc(p.bills.join(", "))+'</td><td class="n">'+money(p.total)+'</td>'+(isStaff()?'':'<td><button class="btn sm" data-undo="'+esc(p.grp)+'">Undo</button></td>')+'</tr>'; }).join("")+
+      '</tbody></table></div>':''));
+  var pbt=$("#custPayBtn"); if(pbt) pbt.addEventListener("click", function(){ custPayModal(key); });
+  $$("[data-undo]",$("#modalBody")).forEach(function(b){ b.addEventListener("click", function(){ undoCustPayment(key, b.dataset.undo); }); });
 }
 $("#custSearch").addEventListener("input", renderCustomers);
 
