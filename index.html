@@ -1027,6 +1027,7 @@ function renderTotals(){
       : row("Amount incl. VAT", c.incl, true) + row("Amount before VAT", c.before) + row("VAT "+c.vatRate+"%", c.vat)) +
     row("Paid", c.paid) +
     '<div class="trow big"><span>Balance in AED</span><span>'+money(c.balance)+'</span></div>' +
+    (due>0.009 && c.balance< -0.009 ? '<div class="trow"><span>Extra goes to old bills</span><span>'+money(Math.min(due, -c.balance))+'</span></div>' : "") +
     (due>0.009 ? '<div class="trow"><span>Previous dues</span><span>'+money(due)+'</span></div><div class="trow big"><span>Current balance</span><span>'+money(due+c.balance)+'</span></div>' : "");
   $("#totals").innerHTML = rows;
   $("#sbAmount").textContent = money(c.balance);
@@ -1145,6 +1146,7 @@ function saveOrder(){
   if(draft.editingId){ o.by = draft.by || o.by; o.editBy = whoAmI(); o.editAt = nowISO(); }
   else { o.by = whoAmI(); }
   touch(o);
+  var movedOld = 0;
   if(draft.editingId){
     var i = DB.orders.findIndex(function(x){ return x.id===draft.editingId; });
     if(i>-1) DB.orders[i]=o; else DB.orders.push(o);
@@ -1152,7 +1154,9 @@ function saveOrder(){
     DB.orders.push(o);
     DB.settings.next = Number(DB.settings.next)+1;
   }
+  movedOld = spillOver(o);
   save(); cloudPush(); refreshChrome();
+  if(movedOld>0.009) setTimeout(function(){ toast("AED "+money(movedOld)+" extra went to old pending bills"); }, 1200);
   return o;
 }
 $("#btnSaveOnly").addEventListener("click", function(){
@@ -1597,7 +1601,8 @@ function payModal(id){
     if(amt<=0){ toast("Enter an amount"); return; }
     o.payments = o.payments||[];
     o.payments.push({date:$("#payDate").value||todayISO(), amount:amt, mode:$("#payMode").value, by:whoAmI()});
-    touch(o); save(); cloudPush(); closeModal(); refreshChrome(); renderOrders(); renderCustomers(); toast("Payment recorded");
+    touch(o); var mv=spillOver(o); save(); cloudPush(); closeModal(); refreshChrome(); renderOrders(); renderCustomers();
+    toast(mv>0.009 ? "Payment recorded · AED "+money(mv)+" went to old bills" : "Payment recorded");
   });
 }
 
@@ -1675,13 +1680,56 @@ function custPayModal(key){
     openCustomer(key);
   });
 }
+/* Extra paid on one bill (balance below zero) clears that customer's older pending bills.
+   Money keeps the same date, mode and person, so daily/monthly cash totals do not change. */
+function spillOver(o){
+  var extra = r2(-calc(o).balance);
+  if(extra<=0.009) return 0;
+  var bills=openBillsOf(custKey(o)).filter(function(x){ return x.id!==o.id; });
+  if(!bills.length) return 0;
+  var need=r2(Math.min(extra, bills.reduce(function(t,x){ return t+calc(x).balance; },0)));
+  // pull the extra out of this bill: advance first, then latest payments; each chunk keeps its own date/mode/person
+  var chunks=[], take=need;
+  var adv=Number(o.advance)||0;
+  if(adv>0.009 && take>0.009){ var c1=r2(Math.min(adv,take)); o.advance=r2(adv-c1); take=r2(take-c1); chunks.push({date:o.date, mode:o.mode, by:o.by||whoAmI(), amt:c1}); }
+  var ps=o.payments||[];
+  for(var i=ps.length-1;i>=0 && take>0.009;i--){
+    var p=ps[i], c2=r2(Math.min(Number(p.amount)||0, take));
+    if(c2<=0.009) continue;
+    p.amount=r2((Number(p.amount)||0)-c2); take=r2(take-c2);
+    chunks.push({date:p.date||o.date, mode:p.mode, by:p.by||o.by, amt:c2});
+  }
+  o.payments=ps.filter(function(p){ return (Number(p.amount)||0)>0.009; });
+  var grp="cp-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,6), moved=0;
+  bills.forEach(function(bill){
+    var bal=calc(bill).balance;
+    while(bal>0.009 && chunks.length){
+      var ch=chunks[0], amt=r2(Math.min(bal, ch.amt));
+      bill.payments=bill.payments||[];
+      bill.payments.push({date:ch.date, amount:amt, mode:ch.mode, by:ch.by, grp:grp, from:o.no});
+      ch.amt=r2(ch.amt-amt); bal=r2(bal-amt); moved=r2(moved+amt);
+      if(ch.amt<=0.009) chunks.shift();
+    }
+    touch(bill);
+  });
+  touch(o);
+  return moved;
+}
 function undoCustPayment(key, grp){
   if(isStaff()){ toast("Only the owner can undo a payment"); return; }
   if(!confirm("Remove this payment from all its bills? The bills will show as pending again.")) return;
+  var back=[];
   DB.orders.forEach(function(o){
     var before=(o.payments||[]).length;
-    o.payments=(o.payments||[]).filter(function(p){ return p.grp!==grp; });
+    o.payments=(o.payments||[]).filter(function(p){ if(p.grp===grp && p.from) back.push(p); return p.grp!==grp; });
     if(o.payments.length!==before) touch(o);
+  });
+  // money that came from an overpaid bill goes back to that bill, so nothing disappears from reports
+  back.forEach(function(p){
+    var src=DB.orders.filter(function(o){ return o.no===p.from && custKey(o)===key; })[0]; if(!src) return;
+    src.payments=src.payments||[];
+    src.payments.push({date:p.date, amount:p.amount, mode:p.mode, by:p.by});
+    touch(src);
   });
   save(); cloudPush(); refreshChrome(); renderOrders(); renderCustomers(); toast("Payment removed");
   openCustomer(key);
@@ -1730,6 +1778,9 @@ function openCustomer(key){
   }).join("");
   var sp = specialRates(c.mobile);
   var cps = custPayments(key);
+  var credit = c.orders.filter(function(o){ return calc(o).balance< -0.009; });
+  var pendingOld = c.orders.some(function(o){ return calc(o).balance>0.009; });
+  var fixBtn = (credit.length && pendingOld) ? '<button class="btn" id="custFixBtn">Move extra payment to old bills</button>' : '';
   var spHtml = sp.length ? '<div class="scroll" style="margin-top:12px"><table class="data"><thead><tr><th>Agreed rate</th><th>Service</th><th class="n">Their rate</th><th class="n">List</th></tr></thead><tbody>'+
       sp.map(function(x){ return '<tr><td>'+esc(x.name)+'</td><td>'+esc(TYPE_LABEL[x.type]||x.type)+'</td><td class="n"><b>'+money(x.rate)+'</b></td><td class="n">'+money(x.listed)+'</td></tr>'; }).join("")+
       '</tbody></table></div>' : "";
@@ -1740,12 +1791,17 @@ function openCustomer(key){
     '<div class="kpi '+(c.due>0.009?"due":"")+'"><b>'+money(c.due)+'</b><span>Pending (AED)</span></div>'+
     '<div class="kpi"><b>'+dmy(c.last).slice(0,5)+'</b><span>Last order</span></div></div>'+
     spHtml +
-    (c.due>0.009?'<div class="btn-row" style="margin-top:12px"><button class="btn primary" id="custPayBtn">Receive payment</button></div>':'')+
+    ((c.due>0.009||fixBtn)?'<div class="btn-row" style="margin-top:12px">'+(c.due>0.009?'<button class="btn primary" id="custPayBtn">Receive payment</button>':'')+fixBtn+'</div>':'')+
     '<div class="scroll" style="margin-top:12px"><table class="data"><thead><tr><th>Date</th><th>Receipt</th><th class="n">Pcs</th><th class="n">Net</th><th class="n">Balance</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
     (cps.length?'<div class="scroll" style="margin-top:12px"><table class="data"><thead><tr><th>Payment date</th><th>Mode</th><th>Bills covered</th><th class="n">Amount</th>'+(isStaff()?'':'<th></th>')+'</tr></thead><tbody>'+
       cps.map(function(p){ return '<tr><td>'+dmy(p.date)+'</td><td>'+esc(p.mode)+'</td><td>'+esc(p.bills.join(", "))+'</td><td class="n">'+money(p.total)+'</td>'+(isStaff()?'':'<td><button class="btn sm" data-undo="'+esc(p.grp)+'">Undo</button></td>')+'</tr>'; }).join("")+
       '</tbody></table></div>':''));
   var pbt=$("#custPayBtn"); if(pbt) pbt.addEventListener("click", function(){ custPayModal(key); });
+  var fbt=$("#custFixBtn"); if(fbt) fbt.addEventListener("click", function(){
+    var m=0; credit.forEach(function(o){ m=r2(m+spillOver(o)); });
+    save(); cloudPush(); refreshChrome(); renderOrders(); renderCustomers();
+    toast("AED "+money(m)+" moved to old bills"); openCustomer(key);
+  });
   $$("[data-undo]",$("#modalBody")).forEach(function(b){ b.addEventListener("click", function(){ undoCustPayment(key, b.dataset.undo); }); });
 }
 $("#custSearch").addEventListener("input", renderCustomers);
