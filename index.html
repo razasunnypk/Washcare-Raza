@@ -586,6 +586,7 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
           <button class="btn dark" id="btnBackup">Download backup</button>
           <label class="btn">Restore backup<input type="file" id="restoreInput" accept="application/json" hidden></label>
           <button class="btn" id="btnCsvAll">Export all orders (CSV)</button>
+          <button class="btn danger" id="btnFresh">Start fresh (clear test orders)</button>
           <button class="btn danger" id="btnWipe">Delete all data</button>
         </div>
         <p class="hint">Records live in this browser only. Take a backup every week and keep the file in Google Drive.</p>
@@ -2196,8 +2197,45 @@ $("#btnCsvMonth").addEventListener("click", function(){
   var ym=$("#rMonth").value||monthOf(todayISO());
   download("washcare-"+ym+".csv", csvOf(monthOrders(ym)), "text/csv;charset=utf-8");
 });
+/* Start fresh: removes orders and expenses dated before a cutoff on every synced device.
+   Keeps settings, price list, logo, staff, PIN. */
+$("#btnFresh").addEventListener("click", function(){
+  if(isStaff()){ toast("Only the owner can do this"); return; }
+  openModal("Start fresh",
+    '<p class="hint" style="margin-top:0">Orders, payments and expenses dated before the date below are deleted from this device and from the cloud, so every synced device clears too. Settings, price list, logo, staff and PIN stay.</p>'+
+    '<div class="grid g2 keep">'+
+      '<label class="fld"><span>Delete everything before</span><input type="date" id="frDate" value="2026-10-01"></label>'+
+      '<label class="fld"><span>Next receipt no. (this device)</span><input type="number" id="frNext" value="1" min="1" inputmode="numeric"></label>'+
+      '<label class="fld"><span>Type DELETE to confirm</span><input type="text" id="frWord" autocomplete="off"></label>'+
+    '</div>'+
+    '<p class="hint" id="frCount"></p>'+
+    '<div class="btn-row" style="margin-top:12px"><button class="btn danger" id="frGo">Back up and delete</button><button class="btn" id="frCancel">Cancel</button></div>');
+  function count(){
+    var d=$("#frDate").value||"";
+    var no=DB.orders.filter(function(o){ return (o.date||"")<d; }).length;
+    var ne=DB.expenses.filter(function(e){ return (e.date||"")<d; }).length;
+    $("#frCount").textContent = no+" order"+(no===1?"":"s")+" and "+ne+" expense"+(ne===1?"":"s")+" will be deleted. First receipt: "+(function(){ var k=DB.settings.next; DB.settings.next=Number($("#frNext").value)||1; var r=receiptNo(); DB.settings.next=k; return r; })();
+  }
+  $("#frDate").addEventListener("input", count); $("#frNext").addEventListener("input", count); count();
+  $("#frCancel").addEventListener("click", closeModal);
+  $("#frGo").addEventListener("click", function(){
+    if($("#frWord").value.trim().toUpperCase()!=="DELETE"){ toast("Type DELETE to confirm"); return; }
+    var d=$("#frDate").value; if(!d){ toast("Pick a date"); return; }
+    try{ $("#btnBackup").click(); }catch(e){}
+    var now=nowISO(), n=0, m=0;
+    DB.orders = DB.orders.filter(function(o){
+      if((o.date||"")<d){ DB.tomb.push({id:o.id, no:o.no, u:now, dirty:true}); n++; return false; } return true;
+    });
+    DB.expenses = DB.expenses.filter(function(e){
+      if((e.date||"")<d){ DB.expTomb.push({id:e.id, u:now, dirty:true}); m++; return false; } return true;
+    });
+    DB.settings.next = Math.max(1, Number($("#frNext").value)||1);
+    save(); cloudPush(); closeModal(); refreshChrome(); fillSettings(); resetForm(); rerender();
+    toast(n+" orders and "+m+" expenses deleted"+(cloudReady()?"":" · sign in to clear the other devices"));
+  });
+});
 $("#btnWipe").addEventListener("click", function(){
-  if(!confirm("This deletes every order, customer and setting in this browser. Download a backup first. Continue?")) return;
+  if(!confirm("This resets this browser only, including settings. Synced orders will come back from the cloud. To clear test orders on all devices, use Start fresh instead. Continue?")) return;
   if(!confirm("Last check — delete everything?")) return;
   DB=defaultDB(); save(); refreshChrome(); fillSettings(); resetForm(); toast("All data deleted");
 });
