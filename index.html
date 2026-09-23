@@ -421,6 +421,18 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
         </div>
       </div>
     </div>
+    <div class="panel" id="panelClose">
+      <div class="panel-hd"><h2>Month close</h2><span class="sub" id="closeSub"></span></div>
+      <div class="panel-bd">
+        <p class="hint" id="closeSync"></p>
+        <div class="btn-row"><button class="btn" id="btnCloseSync">Sync now and refresh</button></div>
+        <div class="scroll" style="margin-top:12px"><table class="data" id="rClose"></table></div>
+        <p class="hint" style="margin-bottom:4px">Data received from each device</p>
+        <div class="scroll"><table class="data" id="rDevices"></table></div>
+        <div class="btn-row" style="margin-top:12px"><button class="btn primary" id="btnCloseDone">Mark month as closed</button></div>
+        <p class="hint" id="closeState"></p>
+      </div>
+    </div>
     <div class="panel">
       <div class="panel-hd"><h2 id="rTitle">Monthly summary</h2></div>
       <div class="panel-bd"><div class="kpis" id="rKpis"></div></div>
@@ -1946,10 +1958,76 @@ function renderReports(){
           '</td><td class="n">'+money(x.spent||0)+'</td><td class="n"><b>'+money(r2(x.cash-(x.spent||0)))+'</b></td></tr>'; }).join("")
         : '<tr><td colspan="7">No activity this month.</td></tr>')+'</tbody>';
   }
+  renderClose(ym, staffRows, ex);
   var pm=$("#panelMonths"); if(pm) pm.hidden = isStaff();
   window.__report = {ym:ym, t:t, items:items, ex:ex};
   renderDay();
   function kpi(v,l,cls){ return '<div class="kpi '+cls+'"><b>'+v+'</b><span>'+l+'</span></div>'; }
+}
+/* Month close: is everything in, and how much cash does each person hand over */
+function renderClose(ym, staffRows, ex){
+  var pc=$("#panelClose"); if(!pc) return;
+  pc.hidden = isStaff();
+  if(isStaff()) return;
+
+  var p = (typeof pendingCount==="function") ? pendingCount() : 0;
+  var lastPull = DB.meta.lastPull ? (dmy(DB.meta.lastPull.slice(0,10))+" "+DB.meta.lastPull.slice(11,16)) : "never";
+  var sync=$("#closeSync");
+  if(!cloudConfigured()){ sync.style.color=""; sync.textContent="This device does not sync. Every device has to be closed on its own."; }
+  else if(p>0){ sync.style.color="var(--warn)"; sync.textContent="This device still has "+p+" item"+(p===1?"":"s")+" waiting to upload. Press Sync now before you count the cash."; }
+  else if(CLOUD.state!=="synced"){ sync.style.color="var(--warn)"; sync.textContent="Sync status: "+CLOUD.state+". Last data received "+lastPull+"."; }
+  else { sync.style.color=""; sync.textContent="This device is synced. Last data received "+lastPull+". Open the app on every staff device and check it shows Synced too."; }
+
+  var rows = (staffRows||[]).filter(function(x){ return x.cash>0.009 || (x.spent||0)>0.009 || x.orders; });
+  var tCash=0, tSpent=0, tHand=0;
+  rows.forEach(function(x){ tCash=r2(tCash+x.cash); tSpent=r2(tSpent+(x.spent||0)); tHand=r2(tHand+(x.cash-(x.spent||0))); });
+  $("#rClose").innerHTML = '<thead><tr><th>Staff</th><th class="n">Cash collected</th><th class="n">Cash spent</th><th class="n">Hands over</th><th class="n">Card + bank</th></tr></thead><tbody>'+
+    (rows.length ? rows.map(function(x){
+      var hand=r2(x.cash-(x.spent||0));
+      return '<tr><td>'+esc(x.who)+'</td><td class="n">'+money(x.cash)+'</td><td class="n">'+money(x.spent||0)+
+        '</td><td class="n"><b>'+money(hand)+'</b></td><td class="n">'+money(r2(x.card+x.bank))+'</td></tr>';
+    }).join("")+'<tr><td><b>Total</b></td><td class="n"><b>'+money(tCash)+'</b></td><td class="n"><b>'+money(tSpent)+
+      '</b></td><td class="n"><b>'+money(tHand)+'</b></td><td class="n"></td></tr>'
+      : '<tr><td colspan="5">No activity this month.</td></tr>')+'</tbody>';
+
+  // which device sent what, so a phone left switched off is easy to spot
+  var dev={};
+  DB.orders.forEach(function(o){
+    if(monthOf(o.date)!==ym) return;
+    var k=(o.dev||"—").toUpperCase();
+    var d=dev[k]||(dev[k]={code:k, n:0, last:"", u:""});
+    d.n++;
+    if((o.date+" "+(o.time||""))>d.last) d.last=o.date+" "+(o.time||"");
+    if((o._u||"")>d.u) d.u=o._u||"";
+  });
+  var dl=Object.keys(dev).map(function(k){ return dev[k]; }).sort(function(a,b){ return b.n-a.n; });
+  $("#rDevices").innerHTML = '<thead><tr><th>Device</th><th class="n">Orders</th><th>Last order on this device</th><th>Received here</th></tr></thead><tbody>'+
+    (dl.length ? dl.map(function(d){
+      return '<tr><td>'+esc(d.code)+'</td><td class="n">'+d.n+'</td><td>'+esc(dmy(d.last.slice(0,10))+" "+d.last.slice(11))+
+        '</td><td>'+(d.u?esc(dmy(d.u.slice(0,10))+" "+d.u.slice(11,16)):"—")+'</td></tr>';
+    }).join("") : '<tr><td colspan="4">No orders this month.</td></tr>')+'</tbody>';
+
+  var closes = DB.settings.closes || {}, c = closes[ym];
+  $("#closeSub").textContent = monthName(ym);
+  $("#closeState").textContent = c
+    ? "Closed on "+dmy(String(c.at).slice(0,10))+" by "+shortWho(c.by)+" · cash collected AED "+money(c.hand)
+    : "Not closed yet.";
+  $("#btnCloseDone").textContent = c ? "Close again (update)" : "Mark month as closed";
+  $("#btnCloseDone").onclick = function(){
+    if(p>0 && !confirm(p+" item"+(p===1?" is":"s are")+" still waiting to upload from this device. Close anyway?")) return;
+    if(!confirm("Confirm you have taken AED "+money(tHand)+" cash in total for "+monthName(ym)+"?")) return;
+    DB.settings.closes = DB.settings.closes || {};
+    DB.settings.closes[ym] = {at:nowISO(), by:whoAmI(), hand:tHand, cash:tCash, spent:tSpent, received:r2(tCash+rows.reduce(function(a,x){ return a+x.card+x.bank; },0))};
+    saveS(); renderClose(ym, staffRows, ex); toast(monthName(ym)+" closed");
+  };
+  var bs=$("#btnCloseSync");
+  bs.onclick = function(){
+    if(!cloudReady()){ toast("Sign in first from Settings"); return; }
+    toast("Syncing…");
+    var r; try{ r=cloudSync(); }catch(e){}
+    if(r && r.then) r.then(function(){ renderReports(); }, function(){ renderReports(); });
+    else setTimeout(renderReports, 2500);
+  };
 }
 function renderDay(){
   var day = $("#rDay").value || todayISO();
