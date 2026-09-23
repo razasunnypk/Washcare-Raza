@@ -854,7 +854,7 @@ function collectedOn(dateISO){
     if(!(amt>0) || !mine(who)) return;
     var k=modeKey(mode);
     out[k]=r2(out[k]+amt); out.total=r2(out.total+amt);
-    var b=out.byWho[who] || (out.byWho[who]={cash:0, card:0, bank:0, other:0, total:0, spent:0});
+    var b=out.byWho[nameKey(who)] || (out.byWho[nameKey(who)]={who:String(who).trim(), cash:0, card:0, bank:0, other:0, total:0, spent:0});
     if(k==="Card") b.card=r2(b.card+amt);
     else if(k==="Bank transfer") b.bank=r2(b.bank+amt);
     else if(k==="Cash") b.cash=r2(b.cash+amt);
@@ -875,7 +875,7 @@ function collectedInMonth(ym){
     if(!(amt>0) || !mine(who)) return;
     var k=modeKey(mode);
     out[k]=r2(out[k]+amt); out.total=r2(out.total+amt);
-    var b=out.byWho[who] || (out.byWho[who]={cash:0, card:0, bank:0, other:0, total:0});
+    var b=out.byWho[nameKey(who)] || (out.byWho[nameKey(who)]={who:String(who).trim(), cash:0, card:0, bank:0, other:0, total:0});
     if(k==="Card") b.card=r2(b.card+amt);
     else if(k==="Bank transfer") b.bank=r2(b.bank+amt);
     else if(k==="Cash") b.cash=r2(b.cash+amt);
@@ -1397,12 +1397,26 @@ function savedModal(o){
    ============================================================ */
 var EXP_CATS = ["Supplies","Salary","Rent","Fuel / transport","Utilities","Maintenance","Machine / equipment","Government / licence","Other"];
 
+/* one key per person, so "Ali", "ali" and " Ali " are the same name */
+function nameKey(n){ return String(n||"").trim().replace(/\s+/g," ").toLowerCase(); }
 function staffNames(){
   var seen={}, out=[];
-  DB.orders.forEach(function(o){ var n=shortWho(o.by); if(n && n!=="—" && !seen[n]){ seen[n]=1; out.push(n); } });
-  DB.expenses.forEach(function(e){ var n=e.spentBy||shortWho(e.by); if(n && !seen[n]){ seen[n]=1; out.push(n); } });
-  ["Shop"].forEach(function(n){ if(!seen[n]){ seen[n]=1; out.push(n); } });
-  return out.sort();
+  function add(n){
+    n=String(n||"").trim().replace(/\s+/g," ");
+    var k=nameKey(n);
+    if(!k || k==="—" || seen[k]) return;
+    seen[k]=1; out.push(n);
+  }
+  DB.orders.forEach(function(o){ add(shortWho(o.by)); });
+  DB.expenses.forEach(function(e){ add(e.spentBy||shortWho(e.by)); });
+  add("Shop");
+  return out.sort(function(a,b){ return nameKey(a).localeCompare(nameKey(b)); });
+}
+/* typed name matched to a name already in use, so spelling case does not split the reports */
+function canonName(n){
+  var k=nameKey(n); if(!k) return "Shop";
+  var hit=staffNames().filter(function(x){ return nameKey(x)===k; })[0];
+  return hit || String(n).trim().replace(/\s+/g," ");
 }
 function monthExpenses(ym){ return scopedExpenses(DB.expenses.filter(function(e){ return monthOf(e.date)===ym; })); }
 function expTotals(list){
@@ -1470,7 +1484,7 @@ $("#btnAddExpense").addEventListener("click", function(){
   var e={
     id: uid(), date: $("#eDate").value||todayISO(), cat: $("#eCat").value,
     amount: amt, mode: $("#eMode").value, note: $("#eNote").value.trim(),
-    spentBy: $("#eBy").value.trim() || "Shop",
+    spentBy: canonName($("#eBy").value),
     by: whoAmI(), dev:(DB.settings.deviceCode||"").toUpperCase(),
     _u: nowISO(), _dirty: true
   };
@@ -1906,8 +1920,8 @@ function renderReports(){
     pes.hidden = isStaff();
     var pb={};
     exList.forEach(function(e){
-      var k=e.spentBy||shortWho(e.by), a=Number(e.amount)||0;
-      if(!pb[k]) pb[k]={who:k, n:0, cash:0, total:0};
+      var disp=(e.spentBy||shortWho(e.by)), k=nameKey(disp), a=Number(e.amount)||0;
+      if(!pb[k]) pb[k]={who:disp, n:0, cash:0, total:0};
       pb[k].n++; pb[k].total=r2(pb[k].total+a);
       if(modeKey(e.mode)==="Cash") pb[k].cash=r2(pb[k].cash+a);
     });
@@ -1920,8 +1934,9 @@ function renderReports(){
 
   // by staff
   var by={};
-  function bucket(k){
-    if(!by[k]) by[k]={who:k, orders:0, billed:0, cash:0, card:0, bank:0, other:0, total:0};
+  function bucket(disp){
+    var k=nameKey(disp);
+    if(!by[k]) by[k]={who:String(disp||"—").trim(), orders:0, billed:0, cash:0, card:0, bank:0, other:0, total:0};
     return by[k];
   }
   function credit(who, mode, amt){
@@ -1938,7 +1953,7 @@ function renderReports(){
     var e=bucket(k); e.orders++; e.billed=r2(e.billed+c.incl);
   });
   Object.keys(col.byWho).forEach(function(k){
-    var src=col.byWho[k], e=bucket(k);
+    var src=col.byWho[k], e=bucket(src.who||k);
     e.cash=r2(e.cash+src.cash); e.card=r2(e.card+src.card);
     e.bank=r2(e.bank+src.bank); e.other=r2(e.other+src.other); e.total=r2(e.total+src.total);
   });
@@ -2055,12 +2070,12 @@ function renderDay(){
     '<div class="kpi"><b>'+pcs+'</b><span>Pieces</span></div>';
 
   exps.forEach(function(e){
-    var k=e.spentBy||shortWho(e.by);
+    var k=nameKey(e.spentBy||shortWho(e.by));
     if(modeKey(e.mode)!=="Cash") return;
     var b=col.byWho[k] || (col.byWho[k]={cash:0,card:0,bank:0,other:0,total:0,spent:0});
     b.spent=r2((b.spent||0)+(Number(e.amount)||0));
   });
-  var rows = Object.keys(col.byWho).map(function(k){ var v=col.byWho[k]; v.who=k; return v; })
+  var rows = Object.keys(col.byWho).map(function(k){ var v=col.byWho[k]; v.who=v.who||k; return v; })
     .sort(function(a,b){ return (b.cash-(b.spent||0))-(a.cash-(a.spent||0)); });
   $("#rDayStaff").innerHTML = '<thead><tr><th>'+(staff?"You":"Staff")+'</th><th class="n">Cash in</th><th class="n">Card</th><th class="n">Bank</th><th class="n">Cash spent</th><th class="n">Hand over</th></tr></thead><tbody>'+
     (rows.length ? rows.map(function(x){
