@@ -972,12 +972,33 @@ $$(".tab").forEach(function(b){ b.addEventListener("click", function(){ showView
    ============================================================ */
 var draft = { lines:[], editingId:null, no:null, createdTime:null };
 
+/* the app can sit open overnight; roll the date forward when it comes back to the screen,
+   but never touch a date the user typed or an order being edited */
+var AUTO_DATE="", AUTO_DELIVERY="";
+function rollDateIfStale(){
+  if(draft.editingId) return;
+  if(draft.lines && draft.lines.length) return;
+  if(!AUTO_DATE || $("#oDate").value!==AUTO_DATE) return;
+  if($("#oDate").value===todayISO()) return;
+  $("#oDate").value = todayISO(); AUTO_DATE = todayISO();
+  if($("#dDate").value===AUTO_DELIVERY){
+    var d=new Date(Date.now()+86400000);
+    $("#dDate").value = d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());
+    AUTO_DELIVERY = $("#dDate").value;
+  }
+  toast("Date moved to today");
+}
+document.addEventListener("visibilitychange", function(){ if(!document.hidden) rollDateIfStale(); });
+window.addEventListener("focus", rollDateIfStale);
+setInterval(rollDateIfStale, 300000);
 function resetForm(){
   draft = { lines:[], editingId:null, no:null, createdTime:null };
   ["cMobile","cName","cArea","cBuilding","cFlat","oNotes"].forEach(function(id){ $("#"+id).value=""; });
   $("#oDate").value = todayISO();
+  AUTO_DATE = todayISO();
   var d=new Date(Date.now()+86400000);
   $("#dDate").value = d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());
+  AUTO_DELIVERY = $("#dDate").value;
   $("#dTime").value = "21:00";
   $("#oUrgent").checked=false; $("#oDiscount").value="0"; $("#oDiscType").value="aed"; $("#oAdvance").value="0";
   $("#iName").value=""; $("#iQty").value="1"; $("#iRate").value="0";
