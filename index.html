@@ -66,8 +66,8 @@ label.fld{display:block;position:relative}
 .sug .row:last-child{border-bottom:0}
 .sug .row b{display:block;font-size:15px;font-weight:600}
 .sug .row small{display:block;font-size:12.5px;color:var(--muted);margin-top:2px}
-.sug .row.on,.sug .row:hover{background:var(--blue);color:#fff}
-.sug .row.on small,.sug .row:hover small{color:#dcebf8}
+.sug .row.on{background:var(--blue);color:#fff}
+.sug .row.on small{color:#dcebf8}
 .sug .none{padding:10px 12px;color:var(--muted)}
 label.fld>span{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:4px}
 input[type=text],input[type=tel],input[type=number],input[type=date],input[type=time],input[type=month],select,textarea{
@@ -1190,6 +1190,11 @@ function sugPick(i){
   $("#iName").value = it._label; sugClose();
   serviceOptions(it); syncRate(); $("#iQty").focus(); $("#iQty").select();
 }
+$("#iSug").addEventListener("mousemove", function(e){
+  var r=e.target.closest(".row"); if(!r) return;
+  var i=Number(r.dataset.i); if(i===SUG.at) return;
+  SUG.at=i; $$(".row",$("#iSug")).forEach(function(x,j){ x.classList.toggle("on", j===i); });
+});
 $("#iSug").addEventListener("mousedown", function(e){
   var r=e.target.closest(".row"); if(!r) return;
   e.preventDefault(); sugPick(Number(r.dataset.i));
