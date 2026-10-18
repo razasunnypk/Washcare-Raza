@@ -568,7 +568,12 @@ table.data td.n,table.data th.n{text-align:right;font-variant-numeric:tabular-nu
           <label class="switch"><input type="checkbox" id="cpCustomer" checked> Customer</label>
           <label class="switch"><input type="checkbox" id="cpFactory" checked> Factory</label>
         </div>
-        <p class="hint">The factory copy never shows rates or totals.</p>
+        <div class="grid g2 keep" style="margin-top:10px">
+          <label class="fld"><span>Factory copies</span>
+            <select id="cpFactoryN"><option value="1">1</option><option value="2">2 (keep one, attach one to cloth)</option><option value="3">3</option></select>
+          </label>
+        </div>
+        <p class="hint">The factory copy never shows rates or totals. With 2 copies, the first says KEEP FOR RECORD and the second ATTACH TO CLOTH.</p>
       </div>
     </div>
 
@@ -793,6 +798,21 @@ function freeReceiptNo(){
   return receiptNo();
 }
 function digits(s){ return String(s||"").replace(/\D/g,""); }
+/* the same phone number written any way (+971 55 905 6384, 055 905 6384, 0559056384, 55 905 6384) gives one key */
+function phoneKey(m){
+  var d=digits(m); if(!d) return "";
+  if(d.indexOf("00")===0) d=d.slice(2);
+  var cc=digits(DB.settings.cc)||"971";
+  if(d.indexOf(cc)===0 && d.length-cc.length>=8) d=d.slice(cc.length);
+  if(d.charAt(0)==="0") d=d.slice(1);
+  if(d.length>9) d=d.slice(-9);
+  return d;
+}
+function phoneMatch(mobile, q){
+  if(!/^[\d\s+()\-]+$/.test(q)) return false;
+  var qk=phoneKey(q); if(qk.length<3) return false;
+  return phoneKey(mobile).indexOf(qk)>-1;
+}
 
 var toastTimer;
 function toast(msg){
@@ -900,10 +920,10 @@ function collectedInMonth(ym){
 }
 function isPaid(o){ return calc(o).balance <= 0.009; }
 function prevDue(mobile, excludeId){
-  var key = digits(mobile); if(!key) return 0;
+  var key = phoneKey(mobile); if(!key) return 0;
   return r2(DB.orders.reduce(function(a,o){
     if(o.id===excludeId) return a;
-    if(digits(o.cust.mobile)!==key) return a;
+    if(phoneKey(o.cust.mobile)!==key) return a;
     return a + calc(o).balance;
   },0));
 }
@@ -1099,10 +1119,10 @@ function buildKeymap(){
   });
 }
 function lastRate(mobile, itemName, type){
-  var key=digits(mobile); if(!key||!itemName) return null;
+  var key=phoneKey(mobile); if(!key||!itemName) return null;
   for(var i=DB.orders.length-1;i>=0;i--){
     var o=DB.orders[i];
-    if(digits(o.cust.mobile)!==key) continue;
+    if(phoneKey(o.cust.mobile)!==key) continue;
     for(var j=o.lines.length-1;j>=0;j--){
       var l=o.lines[j];
       if(l.name===itemName && l.type===type) return {rate:Number(l.rate)||0, date:o.date, no:o.no};
@@ -1111,10 +1131,10 @@ function lastRate(mobile, itemName, type){
   return null;
 }
 function specialRates(mobile){
-  var key=digits(mobile), out={}, list=[];
+  var key=phoneKey(mobile), out={}, list=[];
   if(!key) return list;
   DB.orders.forEach(function(o){
-    if(digits(o.cust.mobile)!==key) return;
+    if(phoneKey(o.cust.mobile)!==key) return;
     o.lines.forEach(function(l){
       var it=DB.items.filter(function(x){ return x.n===l.name; })[0];
       var listed = it && typeof it[l.type]==="number" ? it[l.type] : null;
@@ -1217,8 +1237,8 @@ $("#iType").addEventListener("change", function(){ syncRate(); });
 ["oUrgent","oDiscount","oAdvance"].forEach(function(id){ $("#"+id).addEventListener("input", renderTotals); });
 $("#oDiscType").addEventListener("change", renderTotals);
 $("#cMobile").addEventListener("change", function(){
-  var key=digits($("#cMobile").value); if(!key) return;
-  var hits = DB.orders.filter(function(o){ return digits(o.cust.mobile)===key; });
+  var key=phoneKey($("#cMobile").value); if(!key) return;
+  var hits = DB.orders.filter(function(o){ return phoneKey(o.cust.mobile)===key; });
   if(!hits.length){ $("#custHint").textContent="New customer."; return; }
   var last = hits[hits.length-1];
   if(!$("#cName").value) $("#cName").value = last.cust.name;
@@ -1287,7 +1307,7 @@ function logoHTML(){
   if(DB.settings.logo) return '<div class="logo"><img src="'+DB.settings.logo+'" alt=""></div>';
   return "";
 }
-function buildReceipt(o, copy){
+function buildReceipt(o, copy, tag){
   var s=DB.settings, c=calc(o), showMoney = (copy!=="FACTORY");
   var due = prevDue(o.cust.mobile, o.id);
   var head =
@@ -1298,6 +1318,7 @@ function buildReceipt(o, copy){
     '<div class="hr"></div>' +
     '<div class="title">'+(showMoney ? "TAX INVOICE" : "FACTORY SLIP")+'</div>' +
     '<div class="copy">'+copy+' COPY</div>' +
+    (tag ? '<div class="copy" style="font-size:.85em;letter-spacing:0">'+esc(tag)+'</div>' : '') +
     '<div class="hr"></div>';
 
   var info =
@@ -1373,13 +1394,20 @@ function buildReceipt(o, copy){
   return '<div class="rcpt rcpt-page">'+head+info+table+sum+notes+foot+'</div>';
 }
 
+function factoryPages(o){
+  var n=Math.min(3, Math.max(1, Number(DB.settings.factoryCopies)||2)), h="";
+  for(var i=1;i<=n;i++){
+    h += buildReceipt(o, "FACTORY", n>1 ? ("COPY "+i+" OF "+n+" · "+(i===1 ? "KEEP FOR RECORD" : "ATTACH TO CLOTH")) : "");
+  }
+  return h;
+}
 function printOrder(o, only){
   var s=DB.settings.copies, html="";
-  if(only){ html = buildReceipt(o, only); }
+  if(only){ html = (only==="FACTORY") ? factoryPages(o) : buildReceipt(o, only); }
   else{
     if(s.office) html += buildReceipt(o,"OFFICE");
     if(s.customer) html += buildReceipt(o,"CUSTOMER");
-    if(s.factory) html += buildReceipt(o,"FACTORY");
+    if(s.factory) html += factoryPages(o);
     if(!html) html = buildReceipt(o,"CUSTOMER");
   }
   $("#printArea").innerHTML = html;
@@ -1590,7 +1618,7 @@ function filteredOrders(){
     if(st==="due" && isPaid(o)) return false;
     if(q){
       var hay = (o.no+" "+o.cust.name+" "+o.cust.mobile+" "+o.cust.area).toLowerCase();
-      if(hay.indexOf(q)<0) return false;
+      if(hay.indexOf(q)<0 && !phoneMatch(o.cust.mobile, q)) return false;
     }
     return true;
   }).slice().reverse();
@@ -1734,7 +1762,7 @@ function payModal(id){
 }
 
 /* ---------- customer-level payment: one amount, split oldest bill first ---------- */
-function custKey(o){ return digits(o.cust.mobile) || ("n:"+String(o.cust.name||"").toLowerCase()); }
+function custKey(o){ return phoneKey(o.cust.mobile) || ("n:"+String(o.cust.name||"").toLowerCase()); }
 function openBillsOf(key){
   return DB.orders.map(function(o,i){ return {o:o, i:i}; })
     .filter(function(x){ return custKey(x.o)===key && calc(x.o).balance>0.009; })
@@ -1873,7 +1901,7 @@ function undoCustPayment(key, grp){
 function customerIndex(){
   var map={};
   DB.orders.forEach(function(o){
-    var key = digits(o.cust.mobile) || ("n:"+o.cust.name.toLowerCase());
+    var key = phoneKey(o.cust.mobile) || ("n:"+o.cust.name.toLowerCase());
     if(!map[key]) map[key]={key:key, name:o.cust.name, mobile:o.cust.mobile, area:o.cust.area, orders:[], spent:0, due:0, last:""};
     var c=calc(o), e=map[key];
     e.orders.push(o); e.spent=r2(e.spent+c.incl); e.due=r2(e.due+c.balance);
@@ -1884,7 +1912,7 @@ function customerIndex(){
 function renderCustomers(){
   var q=$("#custSearch").value.trim().toLowerCase();
   var list = customerIndex().filter(function(c){
-    return !q || (c.name+" "+c.mobile).toLowerCase().indexOf(q)>-1;
+    return !q || (c.name+" "+c.mobile).toLowerCase().indexOf(q)>-1 || phoneMatch(c.mobile, q);
   });
   $("#custSummary").textContent = list.length+" customers";
   var box=$("#custList");
@@ -2314,6 +2342,7 @@ function fillSettings(){
   $("#sUser").value = CLOUD.user ? (CLOUD.user.email||"signed in") : (cloudConfigured()?"not signed in":"sync not configured");
   setSync(CLOUD.state);
   $("#sCC").value=s.cc||"971"; $("#sWaPrices").checked=s.waPrices!==false; $("#sWaLine").value=s.waLine||"";
+  $("#cpFactoryN").value=String(Math.min(3, Math.max(1, Number(s.factoryCopies)||2)));
   $("#cpOffice").checked=!!s.copies.office; $("#cpCustomer").checked=!!s.copies.customer; $("#cpFactory").checked=!!s.copies.factory;
   $("#logoPreview").innerHTML = s.logo ? '<img src="'+s.logo+'" alt="Current logo">' : '<span class="hint" style="padding:6px;text-align:center">No logo yet</span>';
 }
@@ -2333,6 +2362,9 @@ $("#btnSaveSettings").addEventListener("click", function(){
     DB.settings.copies={office:$("#cpOffice").checked, customer:$("#cpCustomer").checked, factory:$("#cpFactory").checked};
     save();
   });
+});
+$("#cpFactoryN").addEventListener("change", function(){
+  DB.settings.factoryCopies=Number($("#cpFactoryN").value)||2; save();
 });
 $("#logoInput").addEventListener("change", function(e){
   var f=e.target.files[0]; if(!f) return;
@@ -2442,7 +2474,7 @@ $("#btnWipe").addEventListener("click", function(){
 /* ============================================================
    14b. CLOUD SYNC (Supabase)
    ============================================================ */
-var LOCAL_ONLY_KEYS = ["next","deviceCode","copies","pad","role"];
+var LOCAL_ONLY_KEYS = ["next","deviceCode","copies","pad","role","factoryCopies"];
 var CLOUD = {sb:null, user:null, state:"off", pushTimer:null, pulling:false};
 
 function cloudConfigured(){
