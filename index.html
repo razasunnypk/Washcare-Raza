@@ -1628,8 +1628,12 @@ function renderOrders(){
   var sums = list.reduce(function(a,o){ var c=calc(o); a.net+=c.incl; a.due+=c.balance; return a; },{net:0,due:0});
   $("#ordersSummary").textContent = list.length+" orders · AED "+money(sums.net)+" billed · AED "+money(sums.due)+" pending";
   if(!list.length){ box.innerHTML='<div class="empty">No orders match this filter.</div>'; return; }
+  /* what each customer owes in total (pending bills only, all months), so a bill row can show it */
+  var cdue={};
+  DB.orders.forEach(function(x){ var b=calc(x).balance; if(b>0.009){ var k=custKey(x); cdue[k]=r2((cdue[k]||0)+b); } });
   box.innerHTML = list.map(function(o){
     var c=calc(o), paid=c.balance<=0.009;
+    var ck=custKey(o), allDue=cdue[ck]||0, more=!paid && (allDue-c.balance)>0.009;
     return '<div class="rec"><div class="main">'+
       '<div class="no">'+esc(o.no)+'</div>'+
       '<div class="who">'+esc(o.cust.name)+'</div>'+
@@ -1639,13 +1643,16 @@ function renderOrders(){
         '<button class="btn sm" data-print="'+o.id+'">Print</button>'+
         (o.cust.mobile?'<button class="btn sm" data-wa="'+o.id+'">WhatsApp</button>':'')+
         (paid?"":'<button class="btn sm primary" data-pay="'+o.id+'">Receive payment</button>')+
+        (more?'<button class="btn sm" data-payall="'+esc(ck)+'">Pay all '+money(allDue)+'</button>':'')+
       '</div></div>'+
       '<div class="money"><b>'+money(c.incl)+'</b>'+
         '<span class="badge '+(paid?"paid":"due")+'">'+(paid?"Paid":"Due "+money(c.balance))+'</span>'+
+        (more?'<br><span class="badge due" style="margin-top:4px">All dues '+money(allDue)+'</span>':'')+
         (o.urgent?'<br><span class="badge urgent">Urgent</span>':'')+
       '</div></div>';
   }).join("");
   bindRowActions(box);
+  $$("[data-payall]",box).forEach(function(b){ b.addEventListener("click",function(){ custPayModal(b.dataset.payall); }); });
 }
 function bindRowActions(box){
   $$("[data-view-order]",box).forEach(function(b){ b.addEventListener("click",function(){ openOrder(b.dataset.viewOrder); }); });
